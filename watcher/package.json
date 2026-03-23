@@ -1,0 +1,24 @@
+{
+  "name": "@abeokuta-mini/watcher",
+  "version": "1.0.0",
+  "description": "Centralized watcher: detects BTC/SOL deposits and credits them to the campaign contract",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node --esm src/index.ts",
+    "dev:watch": "nodemon --exec ts-node --esm src/index.ts"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.95.4",
+    "axios": "^1.7.9",
+    "viem": "^2.21.54"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "nodemon": "^3.1.7",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  }
+}
