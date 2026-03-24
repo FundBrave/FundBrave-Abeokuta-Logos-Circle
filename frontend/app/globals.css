@@ -3,54 +3,168 @@
 @tailwind utilities;
 
 :root {
-  --primary:      #450cf0;
-  --primary-600:  #3f0bda;
-  --purple:       #8762fa;
-  --soft-purple:  #cd82ff;
-  --bg-dark:      #09011a;
-  --bg-card:      #120328;
-  --border:       rgba(255,255,255,0.1);
+  /* Trust & Authority Design System */
+  --primary:        #2563EB;
+  --primary-dark:   #1D4ED8;
+  --secondary:      #7C3AED;
+  --secondary-dark: #6D28D9;
+  --accent:         #F97316;
+  --accent-dark:    #EA580C;
+  --bg-dark:        #0A0E1A;
+  --bg-card:        #111827;
+  --text-primary:   #F1F5F9;
+  --text-muted:     #94A3B8;
+  --success:        #10B981;
+  --border:         rgba(255,255,255,0.08);
+  --border-light:   rgba(255,255,255,0.12);
 }
 
 @layer base {
-  * { box-sizing: border-box; }
-  body { background: var(--bg-dark); color: #fff; }
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background: var(--bg-dark);
+    color: var(--text-primary);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer components {
+  .glass {
+    background: rgba(17, 24, 39, 0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-light);
+  }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 1.25rem;
+    padding: 1.5rem;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border-radius: 0.75rem;
+    padding: 0.875rem 1.75rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    transition: all 0.2s ease;
+    border: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .btn-primary:hover {
+    background: var(--accent-dark);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 16px rgba(249, 115, 22, 0.3);
+  }
+
+  .btn-primary:active {
+    transform: translateY(0);
+  }
+
+  .btn-secondary {
+    background: transparent;
+    color: var(--primary);
+    border: 2px solid var(--primary);
+    border-radius: 0.75rem;
+    padding: 0.75rem 1.5rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .btn-secondary:hover {
+    background: rgba(37, 99, 235, 0.1);
+    border-color: var(--primary-dark);
+  }
+
+  .btn-secondary:active {
+    transform: translateY(0);
+  }
+
+  .gradient-text {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--secondary) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
 }
 
 @layer utilities {
-  .glass {
-    background: rgba(18, 3, 40, 0.7);
-    backdrop-filter: blur(12px);
-    border: 1px solid var(--border);
-  }
-  .btn-primary {
-    background: var(--primary);
-    color: #fff;
-    border-radius: 0.75rem;
-    padding: 0.75rem 1.5rem;
-    font-weight: 600;
-    transition: background 0.2s;
-  }
-  .btn-primary:hover { background: var(--primary-600); }
-  .btn-secondary {
-    background: transparent;
-    color: var(--purple);
-    border: 1px solid var(--purple);
-    border-radius: 0.75rem;
-    padding: 0.75rem 1.5rem;
-    font-weight: 600;
-    transition: background 0.2s, color 0.2s;
-  }
-  .btn-secondary:hover {
-    background: rgba(135,98,250,0.1);
+  .text-muted {
+    color: var(--text-muted);
   }
 }
 
 /* Progress bar fill animation */
 @keyframes fill {
-  from { width: 0; }
-  to   { width: var(--target-width); }
+  from {
+    width: 0;
+    opacity: 0;
+  }
+  to {
+    width: var(--target-width);
+    opacity: 1;
+  }
 }
+
 .progress-fill {
-  animation: fill 1.2s ease-out forwards;
+  animation: fill 1.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Subtle pulse animation for badges */
+@keyframes subtle-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.animate-subtle-pulse {
+  animation: subtle-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Fade in from bottom */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.6s ease-out forwards;
+}
+
+/* Hover lift effect */
+@keyframes hover-lift {
+  to {
+    transform: translateY(-4px);
+  }
+}
+
+.hover-lift:hover {
+  animation: hover-lift 0.3s ease-out forwards;
 }

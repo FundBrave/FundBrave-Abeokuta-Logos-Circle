@@ -77,7 +77,7 @@ function DonationRow({ donation }: { donation: DonationRecord }) {
     <div className="glass rounded-xl px-4 py-3 flex items-center justify-between hover:bg-white/5 transition-colors">
       <div className="flex items-center gap-3">
         {/* Avatar */}
-        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#450cf0] to-[#8762fa] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
+        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#2563EB] to-[#7C3AED] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
           {donation.donor.slice(2, 4).toUpperCase()}
         </div>
         <div>
@@ -86,7 +86,7 @@ function DonationRow({ donation }: { donation: DonationRecord }) {
               {shortenAddress(donation.donor)}
             </span>
             {isXChain && (
-              <span className="bg-[#450cf0]/20 text-[#8762fa] text-xs px-2 py-0.5 rounded-full">
+              <span className="bg-[#2563EB]/20 text-[#2563EB] text-xs px-2 py-0.5 rounded-full">
                 {chain}
               </span>
             )}

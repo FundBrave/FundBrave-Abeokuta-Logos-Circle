@@ -785,12 +785,14 @@ describe("AbeokutaCampaign", function () {
         .to.be.revertedWith("Invalid adapter");
     });
 
-    it("re-proposing overwrites pending proposal and resets clock", async function () {
+    it("SC-M4: re-proposing reverts when a proposal is already pending (prevents clock reset)", async function () {
       const swap1 = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress);
       const swap2 = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress);
       await campaign.proposeSwapAdapter(await swap1.getAddress());
-      await campaign.proposeSwapAdapter(await swap2.getAddress());
-      expect(await campaign.pendingSwapAdapter()).to.equal(await swap2.getAddress());
+      await expect(campaign.proposeSwapAdapter(await swap2.getAddress()))
+        .to.be.revertedWith("Proposal already pending");
+      // Original proposal is still in effect
+      expect(await campaign.pendingSwapAdapter()).to.equal(await swap1.getAddress());
     });
 
     it("non-owner cannot pause", async function () {

@@ -193,13 +193,13 @@ export function ManualDonations() {
       {/* Contract address — any EVM wallet */}
       <DonationCard
         icon={
-          <div className="w-6 h-6 rounded-full bg-[#450cf0]/40 flex items-center justify-center flex-shrink-0">
-            <span className="text-[10px] font-bold text-[#8762fa]">EVM</span>
+          <div className="w-6 h-6 rounded-full bg-[#2563EB]/40 flex items-center justify-center flex-shrink-0">
+            <span className="text-[10px] font-bold text-[#2563EB]">EVM</span>
           </div>
         }
         title="Send USDC directly"
         subtitle="Any EVM wallet · Base Sepolia"
-        accent="border-[#450cf0]"
+        accent="border-[#2563EB]"
         address={contractAddress}
         explorerHref={contractAddress !== "0x0000000000000000000000000000000000000000" ? getAddressExplorerUrl(contractAddress) : undefined}
         note="Send USDC (6 decimals) to this contract address from any EVM-compatible wallet. Your donation is recorded on-chain automatically."

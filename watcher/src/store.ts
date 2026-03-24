@@ -37,15 +37,11 @@ const _solSeen = new Set<string>(); // solTxs + solPending keys
 // Serial queue to prevent concurrent disk read/write races
 let _queue: Promise<void> = Promise.resolve();
 
-function _enqueue<T>(fn: () => T): Promise<T> {
+// W-C2: fn may return T or Promise<T>. Using Promise.resolve() flattens the nested
+// promise so async callbacks are awaited and their errors are correctly propagated.
+function _enqueue<T>(fn: () => T | Promise<T>): Promise<T> {
   return new Promise((resolve, reject) => {
-    _queue = _queue.then(() => {
-      try {
-        resolve(fn());
-      } catch (err) {
-        reject(err);
-      }
-    });
+    _queue = _queue.then(() => Promise.resolve(fn()).then(resolve, reject));
   });
 }
 
@@ -148,36 +144,71 @@ function _cleanOrphanedTempFiles(): void {
 
 // ── Stale pending entry resolution ───────────────────────────────────────────
 
-/**
- * On restart, any pending entries are cleared and retried.
- * We do NOT auto-promote to processed — retrying is safer than silently
- * losing a donation. The lock file prevents two instances from running
- * concurrently, making duplicate donations from retry rare.
- */
-function _resolveStalePending(data: StoreData): void {
-  let changed = false;
-  const now = Date.now();
+// Saved at initStore() time for use by verifyAndResolveStalePending()
+let _staleBtcPending: Record<string, number> = {};
+let _staleSolPending: Record<string, number> = {};
 
+/**
+ * On restart, stale pending entries are saved for async verification.
+ * We do NOT delete them here — that happens in verifyAndResolveStalePending()
+ * after checking the Base chain. The in-memory Sets still include them so
+ * duplicate processing within the same run is prevented.
+ */
+function _captureStalePending(data: StoreData): void {
+  const now = Date.now();
   for (const [txid, startedAt] of Object.entries(data.btcPending)) {
-    logger.warn("[store] Found in-flight BTC tx from previous run — will retry", {
+    logger.warn("[store] Found in-flight BTC tx from previous run — verifying on-chain", {
       txid, ageSec: Math.floor((now - startedAt) / 1000),
     });
-    delete data.btcPending[txid];
-    changed = true;
-    // NOTE: intentionally NOT added to btcTxs — will be retried this run.
-    // If the Base tx actually confirmed, this causes one duplicate donation.
-    // That is preferable to silently missing the donation.
+    _staleBtcPending[txid] = startedAt;
   }
-
   for (const [sig, startedAt] of Object.entries(data.solPending)) {
-    logger.warn("[store] Found in-flight SOL tx from previous run — will retry", {
+    logger.warn("[store] Found in-flight SOL tx from previous run — verifying on-chain", {
       sig, ageSec: Math.floor((now - startedAt) / 1000),
     });
-    delete data.solPending[sig];
-    changed = true;
+    _staleSolPending[sig] = startedAt;
+  }
+}
+
+/**
+ * W-C1: Verify stale pending entries against the Base chain before deciding to retry.
+ *
+ * For each entry: if a Donated event from the float wallet is found in the relevant
+ * block range, mark it as processed (no retry). Otherwise, clear it for retry.
+ *
+ * @param checker  Async function that queries Base chain for a Donated event.
+ *                 Passed in from contract.ts to avoid circular imports.
+ */
+export async function verifyAndResolveStalePending(
+  checker: (startedAtMs: number) => Promise<boolean>
+): Promise<void> {
+  const btcEntries = Object.entries(_staleBtcPending);
+  const solEntries = Object.entries(_staleSolPending);
+  if (btcEntries.length === 0 && solEntries.length === 0) return;
+
+  for (const [txid, startedAt] of btcEntries) {
+    const alreadyDonated = await checker(startedAt);
+    if (alreadyDonated) {
+      logger.info("[store] W-C1: Base chain confirms BTC tx was donated — marking processed", { txid });
+      await markBtcProcessed(txid);
+    } else {
+      logger.warn("[store] W-C1: BTC tx not confirmed on Base — clearing for retry", { txid });
+      await clearBtcPending(txid);
+    }
+    delete _staleBtcPending[txid];
   }
 
-  if (changed) _atomicWrite(data);
+  for (const [sig, startedAt] of solEntries) {
+    const alreadyDonated = await checker(startedAt);
+    if (alreadyDonated) {
+      logger.info("[store] W-C1: Base chain confirms SOL tx was donated — marking processed", { sig });
+      await markSolProcessed(sig);
+    } else {
+      logger.warn("[store] W-C1: SOL tx not confirmed on Base — clearing for retry", { sig });
+      await clearSolPending(sig);
+    }
+    delete _staleSolPending[sig];
+  }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -196,7 +227,7 @@ export function initStore(): void {
   _acquireLock();
 
   const data = _readFromDisk();
-  _resolveStalePending(data);
+  _captureStalePending(data); // W-C1: save stale entries; resolution happens async in verifyAndResolveStalePending()
 
   // Populate in-memory Sets from disk state
   data.btcTxs.forEach((t) => _btcSeen.add(t));

@@ -257,9 +257,23 @@ describe("AbeokutaStaking", function () {
       await staking.connect(staker1).stake(1_000n * ONE_USDC);
       await simulateYield(50n * ONE_USDC);
       await staking.harvestAndDistribute();
+      // SC-H2: advance past MIN_HARVEST_INTERVAL (1 hour) before second harvest
+      await time.increase(3601);
       await simulateYield(50n * ONE_USDC);
       await staking.harvestAndDistribute();
       expect(await staking.totalYieldGenerated()).to.equal(100n * ONE_USDC);
+    });
+
+    it("SC-H2: silently returns if called again before MIN_HARVEST_INTERVAL", async function () {
+      await staking.connect(staker1).stake(1_000n * ONE_USDC);
+      await simulateYield(50n * ONE_USDC);
+      await staking.harvestAndDistribute();
+      const tsAfterFirst = await staking.lastHarvestTimestamp();
+
+      // Second harvest immediately — should no-op (rate limit)
+      await simulateYield(10n * ONE_USDC);
+      await staking.harvestAndDistribute(); // should return early
+      expect(await staking.lastHarvestTimestamp()).to.equal(tsAfterFirst);
     });
 
     it("no-ops when no yield available", async function () {
@@ -418,30 +432,78 @@ describe("AbeokutaStaking", function () {
   // ─── claimYield campaign credit (try/catch) ──────────────────────────────
 
   describe("claimYield campaign credit (try/catch)", function () {
-    it("emits YieldCreditFailed when campaign creditDonation reverts", async function () {
+    it("SC-C1: escrows cause yield (not redirect to staker) when campaign creditDonation reverts", async function () {
       const principal = 1_000n * ONE_USDC;
       await staking.connect(staker1).stake(principal);
       const yieldAmt = 100n * ONE_USDC;
       await simulateYield(yieldAmt);
       await staking.harvestAndDistribute();
 
-      const distributable = yieldAmt - (yieldAmt * 200n) / TOTAL_BASIS;
+      const distributable  = yieldAmt - (yieldAmt * 200n) / TOTAL_BASIS;
+      const expectedStaker = (distributable * 1900n) / DISTRIBUTABLE;
+      const expectedCause  = distributable - expectedStaker;
 
       // Pause the campaign so creditDonation reverts with EnforcedPause.
-      // With the pull pattern, no USDC is pre-transferred — so the cause portion
-      // stays in the staking contract. The catch block redirects it to the staker.
       await campaign.pause();
 
-      const stakerBefore = await mockUSDC.balanceOf(staker1.address);
+      const stakerBefore   = await mockUSDC.balanceOf(staker1.address);
       const campaignBefore = await mockUSDC.balanceOf(campaignAddress);
 
+      // SC-C1: emits CauseYieldEscrowed — NOT YieldCreditFailed
       await expect(staking.connect(staker1).claimYield())
-        .to.emit(staking, "YieldCreditFailed");
+        .to.emit(staking, "CauseYieldEscrowed")
+        .withArgs(staker1.address, expectedCause);
 
-      // Staker receives 100% of distributable (stakerShare + redirected causeShare)
-      expect(await mockUSDC.balanceOf(staker1.address) - stakerBefore).to.equal(distributable);
-      // Campaign balance unchanged — no USDC leaked
+      // Staker only receives their own stakerShare — cause is escrowed, not redirected
+      expect(await mockUSDC.balanceOf(staker1.address) - stakerBefore).to.equal(expectedStaker);
       expect(await mockUSDC.balanceOf(campaignAddress)).to.equal(campaignBefore);
+      expect(await staking.pendingCauseYield(staker1.address)).to.equal(expectedCause);
+    });
+
+    it("SC-C1: retryCauseCredit sends escrowed yield to campaign after it unpauses", async function () {
+      await staking.connect(staker1).stake(1_000n * ONE_USDC);
+      await simulateYield(100n * ONE_USDC);
+      await staking.harvestAndDistribute();
+      await campaign.pause();
+      await staking.connect(staker1).claimYield();
+
+      const escrowed = await staking.pendingCauseYield(staker1.address);
+      expect(escrowed).to.be.gt(0);
+
+      await campaign.unpause();
+      const campaignBefore = await mockUSDC.balanceOf(campaignAddress);
+
+      await expect(staking.retryCauseCredit(staker1.address))
+        .to.emit(staking, "CauseYieldRetried")
+        .withArgs(staker1.address, escrowed);
+
+      expect(await mockUSDC.balanceOf(campaignAddress) - campaignBefore).to.equal(escrowed);
+      expect(await staking.pendingCauseYield(staker1.address)).to.equal(0);
+    });
+
+    it("SC-C1: rescueEscrowedCause releases funds to staker after 30 days", async function () {
+      await staking.connect(staker1).stake(1_000n * ONE_USDC);
+      await simulateYield(100n * ONE_USDC);
+      await staking.harvestAndDistribute();
+      await campaign.pause();
+      await staking.connect(staker1).claimYield();
+
+      const escrowed = await staking.pendingCauseYield(staker1.address);
+      expect(escrowed).to.be.gt(0);
+
+      // Before 30 days — should revert
+      await expect(staking.connect(staker1).rescueEscrowedCause())
+        .to.be.revertedWith("Rescue window not yet open");
+
+      // Advance 30 days + 1 second
+      await time.increase(30 * 86400 + 1);
+
+      const stakerBefore = await mockUSDC.balanceOf(staker1.address);
+      await expect(staking.connect(staker1).rescueEscrowedCause())
+        .to.emit(staking, "CauseYieldRescued")
+        .withArgs(staker1.address, escrowed);
+      expect(await mockUSDC.balanceOf(staker1.address) - stakerBefore).to.equal(escrowed);
+      expect(await staking.pendingCauseYield(staker1.address)).to.equal(0);
     });
 
     it("successfully credits campaign when campaign is valid", async function () {
@@ -583,16 +645,44 @@ describe("AbeokutaStaking", function () {
       await expect(staking.connect(other).pause()).to.be.reverted;
     });
 
-    it("owner can update campaign contract and emits CampaignContractUpdated (SC-M1)", async function () {
-      await expect(staking.setCampaignContract(other.address))
+    it("SC-H3: campaign contract change requires propose/execute timelock", async function () {
+      // Propose
+      const activation = (await time.latest()) + 48 * 3600;
+      await expect(staking.proposeCampaignContract(other.address))
+        .to.emit(staking, "CampaignContractProposed")
+        .withArgs(other.address, activation + 1); // +1 for block time drift
+      expect(await staking.pendingCampaignContract()).to.equal(other.address);
+
+      // Execute before timelock — should revert
+      await expect(staking.executeCampaignContract()).to.be.revertedWith("Timelock not expired");
+
+      // Advance 48 hours
+      await time.increase(48 * 3600 + 1);
+
+      // Execute after timelock — should succeed
+      await expect(staking.executeCampaignContract())
         .to.emit(staking, "CampaignContractUpdated")
         .withArgs(other.address);
       expect(await staking.campaignContract()).to.equal(other.address);
+      expect(await staking.pendingCampaignContract()).to.equal(ethers.ZeroAddress);
     });
 
-    it("setCampaignContract reverts with zero address", async function () {
-      await expect(staking.setCampaignContract(ethers.ZeroAddress))
-        .to.be.revertedWith("Invalid");
+    it("SC-H3: proposeCampaignContract reverts with zero address", async function () {
+      await expect(staking.proposeCampaignContract(ethers.ZeroAddress))
+        .to.be.revertedWith("Invalid campaign");
+    });
+
+    it("SC-H3: proposeCampaignContract reverts if proposal already pending", async function () {
+      await staking.proposeCampaignContract(other.address);
+      await expect(staking.proposeCampaignContract(other.address))
+        .to.be.revertedWith("Proposal already pending");
+    });
+
+    it("SC-H3: cancelCampaignContractChange clears pending proposal", async function () {
+      await staking.proposeCampaignContract(other.address);
+      await expect(staking.cancelCampaignContractChange())
+        .to.emit(staking, "CampaignContractChangeCancelled");
+      expect(await staking.pendingCampaignContract()).to.equal(ethers.ZeroAddress);
     });
 
     it("owner can update platform wallet and emits PlatformWalletUpdated (SC-M1)", async function () {
@@ -612,12 +702,14 @@ describe("AbeokutaStaking", function () {
       await expect(staking.restoreAaveApproval()).to.not.be.reverted;
     });
 
-    it("setCampaignContract revokes old approval and grants new one", async function () {
+    it("SC-H3: executeCampaignContract revokes old approval and grants new one", async function () {
       const stakingAddress = await staking.getAddress();
       // Old campaign has max approval from staking
       expect(await mockUSDC.allowance(stakingAddress, campaignAddress)).to.equal(ethers.MaxUint256);
 
-      await staking.setCampaignContract(other.address);
+      await staking.proposeCampaignContract(other.address);
+      await time.increase(48 * 3600 + 1);
+      await staking.executeCampaignContract();
 
       // Old campaign approval revoked
       expect(await mockUSDC.allowance(stakingAddress, campaignAddress)).to.equal(0);
@@ -626,7 +718,7 @@ describe("AbeokutaStaking", function () {
     });
 
     it("non-owner cannot call admin functions", async function () {
-      await expect(staking.connect(other).setCampaignContract(other.address)).to.be.reverted;
+      await expect(staking.connect(other).proposeCampaignContract(other.address)).to.be.reverted;
       await expect(staking.connect(other).setPlatformWallet(other.address)).to.be.reverted;
       await expect(staking.connect(other).revokeAaveApproval()).to.be.reverted;
     });

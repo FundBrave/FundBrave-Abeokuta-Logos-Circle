@@ -35,7 +35,7 @@ function StepRow({ done, active, label }: { done: boolean; active: boolean; labe
       {done ? (
         <CheckCircle2 className="w-4 h-4 text-green-400 flex-shrink-0" />
       ) : active ? (
-        <Loader2 className="w-4 h-4 animate-spin text-[#8762fa] flex-shrink-0" />
+        <Loader2 className="w-4 h-4 animate-spin text-[#7C3AED] flex-shrink-0" />
       ) : (
         <div className="w-4 h-4 rounded-full border border-white/20 flex-shrink-0" />
       )}
@@ -56,21 +56,37 @@ export function CrossChainDonate({ onSuccess }: Props) {
   const xc = useCrossChainDonate();
 
   const [amount, setAmount] = useState("");
+  // FE-H3: Track whether a fresh quote is still pending (amount changed but debounce hasn't fired
+  // yet, or quote is in flight). Keeps the button disabled during the 600ms debounce window so the
+  // user cannot submit with a stale fee from a previous amount.
+  const [isQuotePending, setIsQuotePending] = useState(false);
 
   const parsedAmount =
     amount && parseFloat(amount) > 0
       ? BigInt(Math.floor(parseFloat(amount) * 10 ** USDC_DECIMALS))
       : 0n;
 
-  // Auto-quote when amount changes
+  // Auto-quote when amount changes; mark pending immediately on amount change
   useEffect(() => {
+    if (parsedAmount > 0n && xc.bridgeConfigured) {
+      setIsQuotePending(true);
+    }
     const t = setTimeout(() => {
       if (parsedAmount > 0n && xc.bridgeConfigured) {
         xc.quote(parsedAmount);
+      } else {
+        setIsQuotePending(false);
       }
     }, 600); // debounce
     return () => clearTimeout(t);
   }, [parsedAmount, xc.bridgeConfigured]);
+
+  // Clear isQuotePending once the quote step finishes (step leaves "quoting")
+  useEffect(() => {
+    if (xc.step !== "quoting") {
+      setIsQuotePending(false);
+    }
+  }, [xc.step]);
 
   // Notify parent on success
   useEffect(() => {
@@ -101,7 +117,7 @@ export function CrossChainDonate({ onSuccess }: Props) {
             href={getExplorerUrl(xc.txHash)}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-1.5 text-[#8762fa] text-sm hover:underline mb-6"
+            className="flex items-center justify-center gap-1.5 text-[#2563EB] text-sm hover:underline mb-6"
           >
             <ExternalLink className="w-3.5 h-3.5" />
             View source transaction
@@ -128,8 +144,8 @@ export function CrossChainDonate({ onSuccess }: Props) {
   return (
     <div className="space-y-5">
       {/* Chain banner */}
-      <div className="bg-[#450cf0]/10 border border-[#450cf0]/30 rounded-xl p-4 flex items-start gap-3">
-        <Zap className="w-5 h-5 text-[#8762fa] flex-shrink-0 mt-0.5" />
+      <div className="bg-[#2563EB]/10 border border-[#2563EB]/30 rounded-xl p-4 flex items-start gap-3">
+        <Zap className="w-5 h-5 text-[#2563EB] flex-shrink-0 mt-0.5" />
         <div className="flex-1">
           <div className="text-sm font-medium text-white">
             Cross-chain via LayerZero V2
@@ -169,7 +185,7 @@ export function CrossChainDonate({ onSuccess }: Props) {
             min="1"
             step="any"
             disabled={showSteps}
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-lg font-medium focus:outline-none focus:border-[#8762fa] transition-colors pr-20 disabled:opacity-50"
+            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-lg font-medium focus:outline-none focus:border-[#2563EB] transition-colors pr-20 disabled:opacity-50"
           />
           <span className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40 font-medium">
             USDC
@@ -278,7 +294,8 @@ export function CrossChainDonate({ onSuccess }: Props) {
           !amount ||
           parsedAmount === 0n ||
           xc.isProcessing ||
-          xc.step === "quoting" ||   // FE-H4: block while fee is being estimated
+          isQuotePending ||          // FE-H3: block during 600ms debounce gap
+          xc.step === "quoting" ||   // also block while quote is in flight
           !xc.bridgeConfigured ||
           xc.lzFee === 0n
         }

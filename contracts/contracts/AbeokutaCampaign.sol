@@ -116,6 +116,8 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
     event SwapAdapterProposed(address indexed proposedAdapter, uint256 activationTime);
     event SwapAdapterChangeCancelled();
     event CircuitBreakerHalted();
+    /// @notice SC-M2: Emitted on emergency ETH rescue so withdrawals are always on-chain visible
+    event EmergencyETHWithdrawal(address indexed to, uint256 amount);
 
     // ─────────────────────────────────────────────
     //  Errors
@@ -435,6 +437,10 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
 
     function progressBps() external view returns (uint256) {
         if (goalMax == 0) return 0;
+        // SC-M3: Guard against overflow in the multiplication. Since Solidity 0.8 reverts on
+        // overflow, an extreme totalRaised would make this view function revert.
+        // If totalRaised is already ≥ goalMax the campaign is at/above 100% — return early.
+        if (totalRaised >= goalMax) return 10000;
         uint256 bps = (totalRaised * 10000) / goalMax;
         return bps > 10000 ? 10000 : bps;
     }
@@ -467,10 +473,12 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @notice Propose a new swap adapter. The change becomes effective after ADAPTER_TIMELOCK (48h).
-     * @dev Calling again before the timelock expires overwrites the proposal and resets the clock.
+     * @dev SC-M4: A pending proposal must be executed or cancelled before a new one is accepted.
+     *      This prevents the owner from indefinitely resetting the timelock clock.
      */
     function proposeSwapAdapter(address _swap) external onlyOwner {
         require(_swap != address(0), "Invalid adapter");
+        require(pendingSwapAdapter == address(0), "Proposal already pending");
         pendingSwapAdapter = _swap;
         swapAdapterActivationTime = block.timestamp + ADAPTER_TIMELOCK;
         emit SwapAdapterProposed(_swap, swapAdapterActivationTime);
@@ -545,6 +553,7 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         require(bal > 0, "No ETH to rescue");
         (bool ok, ) = to.call{value: bal}("");
         require(ok, "ETH transfer failed");
+        emit EmergencyETHWithdrawal(to, bal);                    // SC-M2
     }
 
     receive() external payable {}

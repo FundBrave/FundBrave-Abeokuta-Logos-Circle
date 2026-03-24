@@ -119,7 +119,13 @@ export const SUPPORTED_TOKENS: TokenInfo[] = [
   {
     symbol:      "DAI",
     name:        "Dai Stablecoin",
-    address:     (process.env.NEXT_PUBLIC_DAI_ADDRESS  || "0xD5F45AE6088fE7DadA621C8A70F94abE3F46f7Bf") as Address,
+    // FE-H4: Fallback address is testnet-only. On mainnet, NEXT_PUBLIC_DAI_ADDRESS must be set
+    // explicitly — a missing env var on mainnet would silently use a wrong contract address.
+    address:     requireAddress(
+      "NEXT_PUBLIC_DAI_ADDRESS",
+      process.env.NEXT_PUBLIC_DAI_ADDRESS,
+      (TARGET_CHAIN_ID as number) !== 8453 ? "0xD5F45AE6088fE7DadA621C8A70F94abE3F46f7Bf" : undefined
+    ),
     decimals:    18,
     isNative:    false,
     coingeckoId: "dai",
@@ -127,7 +133,12 @@ export const SUPPORTED_TOKENS: TokenInfo[] = [
   {
     symbol:      "WETH",
     name:        "Wrapped Ether",
-    address:     (process.env.NEXT_PUBLIC_WETH_ADDRESS || "0x8140C9fE21D9639FD69E9eF345Be39d767eE7FE2") as Address,
+    // FE-H4: Same mainnet guard as DAI.
+    address:     requireAddress(
+      "NEXT_PUBLIC_WETH_ADDRESS",
+      process.env.NEXT_PUBLIC_WETH_ADDRESS,
+      (TARGET_CHAIN_ID as number) !== 8453 ? "0x8140C9fE21D9639FD69E9eF345Be39d767eE7FE2" : undefined
+    ),
     decimals:    18,
     isNative:    false,
     coingeckoId: "weth",

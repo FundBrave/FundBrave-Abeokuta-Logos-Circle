@@ -16,10 +16,10 @@
 
 import * as http from "http";
 import { config } from "./config";
-import { initStore } from "./store";
+import { initStore, verifyAndResolveStalePending } from "./store";
 import { pollBtc } from "./watchers/btcWatcher";
 import { pollSol } from "./watchers/solWatcher";
-import { getFloatBalance } from "./contract";
+import { getFloatBalance, checkRecentDonation } from "./contract";
 import { formatUnits } from "viem";
 import { logger } from "./logger";
 
@@ -190,6 +190,17 @@ async function main(): Promise<void> {
 
   // W-H3: Acquire instance lock and clean up any crash artifacts
   initStore();
+
+  // W-C1: Verify any stale pending entries against the Base chain before polling begins.
+  // This prevents double-donations when the watcher crashed between donateToCampaign()
+  // succeeding and markProcessed() completing.
+  try {
+    await verifyAndResolveStalePending(checkRecentDonation);
+  } catch (err) {
+    logger.warn("[startup] W-C1 stale pending verification failed — entries will be retried", {
+      error: String(err),
+    });
+  }
 
   await printStartupInfo();
   startHealthServer();

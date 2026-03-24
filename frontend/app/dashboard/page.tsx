@@ -40,11 +40,11 @@ export default function DashboardPage() {
     : 0;
 
   return (
-    <div className="min-h-screen bg-[#09011a]">
+    <div className="min-h-screen bg-[#0A0E1A]">
       {/* Header */}
-      <header className="sticky top-0 z-50 glass border-b border-white/10">
+      <header className="sticky top-0 z-50 glass border-b border-white/8">
         <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 text-white/60 hover:text-white transition-colors">
+          <Link href="/" className="flex items-center gap-2 text-white/60 hover:text-white transition-colors duration-200">
             <ArrowLeft className="w-4 h-4" />
             <FundBraveLogo className="h-7" />
           </Link>
@@ -62,7 +62,7 @@ export default function DashboardPage() {
         </p>
 
         {/* Progress */}
-        <div className="glass rounded-2xl p-6 mb-6">
+        <div className="glass rounded-2xl p-6 mb-6 border border-white/8 transition-all duration-300 hover:border-white/12">
           <div className="flex items-baseline justify-between mb-4">
             <div>
               <span className="text-4xl font-bold text-white">
@@ -73,7 +73,7 @@ export default function DashboardPage() {
               </span>
             </div>
             <div className="text-right">
-              <div className="text-2xl font-bold text-[#8762fa]">
+              <div className="text-2xl font-bold text-[#2563EB]">
                 {stats.progressPercent.toFixed(1)}%
               </div>
               <div className="text-white/40 text-sm">funded</div>
@@ -98,31 +98,31 @@ export default function DashboardPage() {
               icon: Users,
               label: "Unique Donors",
               value: stats.donorCount.toString(),
-              color: "#450cf0",
+              color: "#2563EB",
             },
             {
               icon: DollarSign,
               label: "Total Raised",
               value: `$${stats.totalRaisedFormatted}`,
-              color: "#8762fa",
+              color: "#F97316",
             },
             {
               icon: TrendingUp,
               label: "Total Staked",
               value: `$${stats.totalStakedFormatted}`,
-              color: "#4ade80",
+              color: "#10B981",
             },
             {
               icon: TrendingUp,
               label: "Yield Generated",
               value: `$${stats.totalYieldGeneratedFormatted}`,
-              color: "#fbbf24",
+              color: "#7C3AED",
             },
           ].map(({ icon: Icon, label, value, color }) => (
-            <div key={label} className="glass rounded-xl p-4">
+            <div key={label} className="glass rounded-xl p-4 border border-white/8 transition-all duration-300 hover:border-white/12 hover-lift">
               <div
                 className="w-8 h-8 rounded-lg flex items-center justify-center mb-3"
-                style={{ background: `${color}20` }}
+                style={{ background: `${color}15` }}
               >
                 <Icon className="w-4 h-4" style={{ color }} />
               </div>
@@ -133,10 +133,10 @@ export default function DashboardPage() {
         </div>
 
         {/* Multisig transparency */}
-        <div className="glass rounded-2xl p-6 mb-6">
+        <div className="glass rounded-2xl p-6 mb-6 border border-white/8 transition-all duration-300 hover:border-white/12">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
-              <Shield className="w-4 h-4 text-green-400" />
+            <div className="w-8 h-8 rounded-lg bg-[#10B981]/20 flex items-center justify-center">
+              <Shield className="w-4 h-4 text-[#10B981]" />
             </div>
             <div>
               <h2 className="text-lg font-semibold text-white">Multisig Treasury</h2>
@@ -147,7 +147,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Safe address */}
-          <div className="bg-white/5 rounded-xl p-3 mb-4 flex items-center justify-between">
+          <div className="bg-white/5 rounded-xl p-3 mb-4 flex items-center justify-between border border-white/8 transition-colors duration-200">
             <div>
               <div className="text-xs text-white/40 mb-1">Safe Address (Gnosis Safe)</div>
               <div className="text-white font-mono text-sm">
@@ -161,7 +161,7 @@ export default function DashboardPage() {
                 href={getAddressExplorerUrl(CONTRACT_ADDRESSES.treasury)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[#8762fa] hover:text-white transition-colors"
+                className="text-[#2563EB] hover:text-[#1D4ED8] transition-colors duration-200"
               >
                 <ExternalLink className="w-4 h-4" />
               </a>
@@ -174,7 +174,7 @@ export default function DashboardPage() {
             {MULTISIG_SIGNERS.map((signer) => (
               <div
                 key={signer.name}
-                className="bg-white/5 rounded-xl p-3 flex items-center justify-between"
+                className="bg-white/5 rounded-xl p-3 flex items-center justify-between border border-white/8 transition-all duration-200 hover:border-white/12"
               >
                 <div>
                   <div className="text-sm text-white">{signer.name}</div>
@@ -185,7 +185,7 @@ export default function DashboardPage() {
                     href={getAddressExplorerUrl(signer.address)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-white/30 hover:text-[#8762fa] transition-colors"
+                    className="text-white/30 hover:text-[#2563EB] transition-colors duration-200"
                   >
                     <ExternalLink className="w-3 h-3" />
                   </a>
@@ -196,7 +196,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Contract addresses */}
-        <div className="glass rounded-2xl p-6 mb-6">
+        <div className="glass rounded-2xl p-6 mb-6 border border-white/8 transition-all duration-300 hover:border-white/12">
           <h2 className="text-lg font-semibold text-white mb-4">Smart Contracts</h2>
           <div className="space-y-3">
             {[
@@ -207,7 +207,7 @@ export default function DashboardPage() {
             ].map(({ label, address }) => (
               <div
                 key={label}
-                className="flex items-center justify-between py-2 border-b border-white/5 last:border-0"
+                className="flex items-center justify-between py-2 border-b border-white/8 last:border-0 transition-colors duration-200"
               >
                 <div>
                   <div className="text-sm text-white/60">{label}</div>
@@ -219,7 +219,7 @@ export default function DashboardPage() {
                   href={getAddressExplorerUrl(address)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-white/30 hover:text-[#8762fa] transition-colors flex-shrink-0 ml-3"
+                  className="text-white/30 hover:text-[#2563EB] transition-colors duration-200 flex-shrink-0 ml-3"
                 >
                   <ExternalLink className="w-4 h-4" />
                 </a>
@@ -235,7 +235,7 @@ export default function DashboardPage() {
         </div>
 
         {/* CTA */}
-        <div className="glass rounded-2xl p-6 text-center">
+        <div className="glass rounded-2xl p-6 text-center border border-white/8 transition-all duration-300 hover:border-white/12">
           <h3 className="text-lg font-semibold text-white mb-2">Ready to contribute?</h3>
           <p className="text-white/50 text-sm mb-4">
             Every donation, no matter how small, directly funds women entrepreneurs in Abeokuta.

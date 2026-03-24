@@ -3,3 +3,4 @@
 /frontend/.env.local
 /contracts/.env
 /watcher/.env
+/.claude

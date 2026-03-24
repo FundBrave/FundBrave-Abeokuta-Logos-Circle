@@ -29,9 +29,9 @@ export function ProgressBar({ percent, className = "" }: ProgressBarProps) {
         ref={fillRef}
         className="h-full rounded-full progress-fill"
         style={{
-          background: "linear-gradient(90deg, #450cf0, #8762fa, #cd82ff)",
+          background: "linear-gradient(90deg, #2563EB, #7C3AED, #F97316)",
           width: `${Math.min(percent, 100)}%`,
-          boxShadow: "0 0 12px rgba(135,98,250,0.6)",
+          boxShadow: "0 0 12px rgba(37,99,235,0.5)",
         }}
       />
     </div>

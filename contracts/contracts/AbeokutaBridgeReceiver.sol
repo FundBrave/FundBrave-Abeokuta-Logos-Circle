@@ -59,6 +59,8 @@ contract AbeokutaBridgeReceiver is Ownable, ReentrancyGuard, Pausable {
     event BridgeUpdated(address indexed newBridge);
     event CampaignUpdated(address indexed newCampaign);
     event UnsupportedStakeReceived(address indexed donor, uint256 amount, uint32 srcEid);
+    /// @notice SC-M1: Emitted when an EID→chain name mapping is added or updated
+    event EidChainNameSet(uint32 indexed eid, string name);
 
     // ─── Errors ───────────────────────────────────────────────────────────────
 
@@ -149,6 +151,11 @@ contract AbeokutaBridgeReceiver is Ownable, ReentrancyGuard, Pausable {
 
     // ─── Internal ────────────────────────────────────────────────────────────
 
+    /**
+     * @dev SC-L3: Resolves a LayerZero EID to a human-readable chain name for donation records.
+     *      Returns "unknown" if the EID has no registered mapping, so the donation is still
+     *      recorded rather than silently dropped.
+     */
     function _chainName(uint32 eid) internal view returns (string memory) {
         string memory name = eidToChainName[eid];
         if (bytes(name).length == 0) return "unknown";
@@ -172,10 +179,12 @@ contract AbeokutaBridgeReceiver is Ownable, ReentrancyGuard, Pausable {
         emit CampaignUpdated(_campaign);
     }
 
-    /// @notice SC-M2: Reject empty strings to prevent unmapped EIDs being silently overwritten with "".
+    /// @notice SC-M1: Add or update an EID → chain name mapping.
+    ///         Rejects empty strings to prevent unmapped EIDs being silently overwritten with "".
     function setEidChainName(uint32 eid, string calldata name) external onlyOwner {
         require(bytes(name).length > 0, "Empty chain name");
         eidToChainName[eid] = name;
+        emit EidChainNameSet(eid, name);
     }
 
     function pause() external onlyOwner   { _pause(); }

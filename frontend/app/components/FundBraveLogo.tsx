@@ -13,7 +13,7 @@ export function FundBraveLogo({ className = "h-8" }: Props) {
       aria-label="FundBrave"
     >
       {/* Icon mark */}
-      <rect x="0" y="4" width="28" height="28" rx="7" fill="#450cf0" />
+      <rect x="0" y="4" width="28" height="28" rx="7" fill="#2563EB" />
       <path
         d="M8 22 L14 12 L20 18 L24 14"
         stroke="white"

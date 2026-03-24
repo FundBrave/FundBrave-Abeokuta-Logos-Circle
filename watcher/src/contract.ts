@@ -51,6 +51,12 @@ const CAMPAIGN_ABI = parseAbi([
   "function donateUSDC(uint256 amount) external",
 ]);
 
+// W-C1: ABI fragment for the Donated event emitted after a successful donateUSDC call.
+// Used to verify whether a donation was confirmed on-chain before retrying stale pending entries.
+const DONATED_EVENT = parseAbi([
+  "event Donated(address indexed donor, uint256 usdcAmount, address indexed tokenIn, string sourceChain)",
+])[0];
+
 // ── Clients ────────────────────────────────────────────────────────────────────
 
 // Detect mainnet vs testnet by RPC URL heuristic
@@ -108,6 +114,47 @@ export async function getFloatBalance(): Promise<bigint> {
     functionName: "balanceOf",
     args: [account.address],
   });
+}
+
+// ── W-C1: On-chain donation confirmation check ─────────────────────────────────
+
+/**
+ * W-C1: Check whether the float wallet emitted a Donated event at or after `startedAtMs`.
+ *
+ * Called when a stale pending entry is found on startup to determine whether the
+ * donation actually confirmed on-chain before the crash. If it did, the entry
+ * should be marked processed (not retried), preventing a double donation.
+ *
+ * Block range: searches from the estimated block at `startedAtMs` to latest.
+ * Uses 2 s/block (Base block time) plus a 100-block safety buffer.
+ *
+ * @param startedAtMs  Unix timestamp (ms) when the donation attempt began
+ * @returns true if a Donated event from the float wallet was found in that range
+ */
+export async function checkRecentDonation(startedAtMs: number): Promise<boolean> {
+  try {
+    const latestBlock = await publicClient.getBlockNumber();
+    const ageMs = Date.now() - startedAtMs;
+    // Estimate how many blocks back we need to search; add 100-block buffer
+    const estimatedBlocks = BigInt(Math.ceil(ageMs / 2_000) + 100);
+    const fromBlock = latestBlock > estimatedBlocks ? latestBlock - estimatedBlocks : 0n;
+
+    const logs = await publicClient.getLogs({
+      address: config.campaignAddress as `0x${string}`,
+      event: DONATED_EVENT,
+      args: { donor: account.address },
+      fromBlock,
+      toBlock: "latest",
+    });
+    return logs.length > 0;
+  } catch (err) {
+    // If the check itself fails (RPC error, etc.), be conservative: assume NOT confirmed
+    // so the pending entry is retried rather than silently dropped.
+    logger.warn("[contract] checkRecentDonation failed — assuming not confirmed", {
+      error: String(err),
+    });
+    return false;
+  }
 }
 
 // ── Main donation function ─────────────────────────────────────────────────────

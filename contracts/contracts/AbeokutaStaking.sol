@@ -96,6 +96,35 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
     uint256 public totalYieldGenerated;
 
     // ─────────────────────────────────────────────
+    //  Cause yield escrow (SC-C1)
+    // ─────────────────────────────────────────────
+
+    /// @notice Cause yield escrowed after a creditDonation failure (instead of redirecting to staker)
+    mapping(address => uint256) public pendingCauseYield;
+    /// @notice Timestamp when cause yield was first escrowed (for rescue window)
+    mapping(address => uint256) public pendingCauseTimestamp;
+    /// @notice 30-day window after which a staker may rescue unclaimed escrowed cause yield
+    uint256 public constant CAUSE_YIELD_RESCUE_WINDOW = 30 days;
+
+    // ─────────────────────────────────────────────
+    //  Harvest rate limiting (SC-H2)
+    // ─────────────────────────────────────────────
+
+    /// @notice Minimum time between harvests — prevents griefing / gas-waste spam
+    uint256 public constant MIN_HARVEST_INTERVAL = 1 hours;
+
+    // ─────────────────────────────────────────────
+    //  Campaign contract timelock (SC-H3)
+    // ─────────────────────────────────────────────
+
+    /// @notice Pending campaign contract address; address(0) means no change in progress
+    address public pendingCampaignContract;
+    /// @notice Earliest timestamp at which pendingCampaignContract can be activated
+    uint256 public campaignActivationTime;
+    /// @notice Timelock delay before a proposed campaign contract can be activated (48 hours)
+    uint256 public constant CAMPAIGN_TIMELOCK = 48 hours;
+
+    // ─────────────────────────────────────────────
     //  Events
     // ─────────────────────────────────────────────
 
@@ -117,8 +146,18 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
         uint16  stakerShare
     );
     event YieldCreditFailed(address indexed staker, uint256 causeAmount);
-    /// @notice SC-M1: Emitted when the campaign contract address is updated
+    /// @notice SC-C1: Emitted when cause yield is escrowed after a creditDonation failure
+    event CauseYieldEscrowed(address indexed staker, uint256 amount);
+    /// @notice SC-C1: Emitted when escrowed cause yield is successfully retried to the campaign
+    event CauseYieldRetried(address indexed staker, uint256 amount);
+    /// @notice SC-C1: Emitted when a staker rescues escrowed yield after the rescue window
+    event CauseYieldRescued(address indexed staker, uint256 amount);
+    /// @notice SC-M1: Emitted when the campaign contract address is updated (after timelock)
     event CampaignContractUpdated(address indexed newCampaign);
+    /// @notice SC-H3: Emitted when a new campaign contract change is proposed
+    event CampaignContractProposed(address indexed proposed, uint256 activationTime);
+    /// @notice SC-H3: Emitted when a pending campaign contract change is cancelled
+    event CampaignContractChangeCancelled();
     /// @notice SC-M1: Emitted when the platform wallet address is updated
     event PlatformWalletUpdated(address indexed newWallet);
 
@@ -219,6 +258,10 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
         // Leave the yield accumulating in Aave; it will be harvestable once stakers return.
         if (totalPrincipal == 0) return;
 
+        // SC-H2: Rate limit harvests to prevent griefing / gas-waste spam
+        if (lastHarvestTimestamp > 0 &&
+            block.timestamp < lastHarvestTimestamp + MIN_HARVEST_INTERVAL) return;
+
         uint256 aBalance = aUsdc.balanceOf(address(this));
         if (aBalance <= totalPrincipal) return;
 
@@ -278,18 +321,22 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
             usdc.safeTransfer(msg.sender, stakerAmount);
         }
 
-        // M1: Campaign pulls USDC from this contract via safeTransferFrom (approval set in constructor).
+        // SC-C1: Campaign pulls USDC from this contract via safeTransferFrom (approval set in constructor).
         // If creditDonation reverts (campaign paused/ended), the pull never happened so USDC stays here.
-        // The catch block then redirects the cause portion to the staker so yield is never permanently stuck.
+        // The cause portion is escrowed — NOT redirected to the staker — to prevent a malicious staker
+        // from pausing the campaign and collecting cause funds as a personal payout.
+        // Use retryCauseCredit() to retry, or rescueEscrowedCause() after CAUSE_YIELD_RESCUE_WINDOW.
         if (causeAmount > 0 && campaignContract != address(0)) {
             try IAbeokutaCampaign(campaignContract).creditDonation(
                 msg.sender,
                 causeAmount,
                 "staking-yield"
             ) {} catch {
-                // Campaign unavailable — redirect cause portion to staker (USDC still in this contract)
-                usdc.safeTransfer(msg.sender, causeAmount);
-                emit YieldCreditFailed(msg.sender, causeAmount);
+                // Campaign unavailable — escrow cause portion for later retry (SC-C1)
+                pendingCauseYield[msg.sender] += causeAmount;
+                if (pendingCauseTimestamp[msg.sender] == 0)
+                    pendingCauseTimestamp[msg.sender] = block.timestamp;
+                emit CauseYieldEscrowed(msg.sender, causeAmount);
             }
         }
 
@@ -357,7 +404,11 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
     //  Internal — accumulator settlement
     // ─────────────────────────────────────────────
 
-    /// @dev Snapshots accrued distributable yield into pendingRawYield for `account`.
+    /**
+     * @dev SC-L3: Snapshots accrued distributable yield into pendingRawYield for `account`.
+     *      Called by the `updateReward` modifier before any state-mutating function, and
+     *      directly by `setYieldSplit` to settle yield under the old split before changing it.
+     */
     function _settleRaw(address account) private {
         uint256 newRaw = _accruedRaw(account);
         userYieldPerTokenPaid[account] = yieldPerTokenStored;
@@ -366,7 +417,11 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
         }
     }
 
-    /// @dev Yield accrued since last settle, based on accumulator delta.
+    /**
+     * @dev SC-L3: Computes distributable yield accrued since the last settle for `account`.
+     *      Uses the Synthetix per-token accumulator pattern:
+     *      accrued = principal × (yieldPerTokenStored − userYieldPerTokenPaid) / 1e18
+     */
     function _accruedRaw(address account) private view returns (uint256) {
         return (stakerPrincipal[account] *
             (yieldPerTokenStored - userYieldPerTokenPaid[account])) / 1e18;
@@ -413,16 +468,87 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
     }
 
     // ─────────────────────────────────────────────
+    //  Cause yield retry / rescue (SC-C1)
+    // ─────────────────────────────────────────────
+
+    /**
+     * @notice SC-C1: Retry crediting escrowed cause yield to the campaign.
+     * @dev Callable by anyone (trustless retry bot). The USDC is already held in this contract.
+     *      If creditDonation still reverts, the whole transaction reverts — try again later.
+     * @param staker Address whose escrowed cause yield to retry
+     */
+    function retryCauseCredit(address staker) external nonReentrant whenNotPaused {
+        uint256 amount = pendingCauseYield[staker];
+        require(amount > 0, "No pending cause yield");
+        require(campaignContract != address(0), "No campaign contract");
+
+        pendingCauseYield[staker] = 0;
+        // creditDonation reverts → whole tx reverts → pendingCauseYield is restored
+        IAbeokutaCampaign(campaignContract).creditDonation(staker, amount, "staking-yield");
+        pendingCauseTimestamp[staker] = 0;
+        emit CauseYieldRetried(staker, amount);
+    }
+
+    /**
+     * @notice SC-C1: Rescue escrowed cause yield after the rescue window has elapsed.
+     * @dev Staker-only. Only available after CAUSE_YIELD_RESCUE_WINDOW (30 days) has passed
+     *      since the escrow was created. Prevents permanent lock-in if campaign is gone forever.
+     */
+    function rescueEscrowedCause() external nonReentrant {
+        uint256 amount = pendingCauseYield[msg.sender];
+        require(amount > 0, "No pending cause yield");
+        require(
+            pendingCauseTimestamp[msg.sender] > 0 &&
+            block.timestamp >= pendingCauseTimestamp[msg.sender] + CAUSE_YIELD_RESCUE_WINDOW,
+            "Rescue window not yet open"
+        );
+        pendingCauseYield[msg.sender] = 0;
+        pendingCauseTimestamp[msg.sender] = 0;
+        usdc.safeTransfer(msg.sender, amount);
+        emit CauseYieldRescued(msg.sender, amount);
+    }
+
+    // ─────────────────────────────────────────────
     //  Admin
     // ─────────────────────────────────────────────
 
-    function setCampaignContract(address _campaign) external onlyOwner {
-        require(_campaign != address(0), "Invalid");
-        // Revoke pull approval from old campaign, grant to new one
+    // ── Campaign contract timelock (SC-H3) ─────────────────────────────────────
+
+    /**
+     * @notice SC-H3: Propose a new campaign contract. Change is effective after CAMPAIGN_TIMELOCK (48h).
+     * @dev A pending proposal must be executed or cancelled before a new one can be made,
+     *      preventing the owner from resetting the clock indefinitely.
+     */
+    function proposeCampaignContract(address _campaign) external onlyOwner {
+        require(_campaign != address(0), "Invalid campaign");
+        require(pendingCampaignContract == address(0), "Proposal already pending");
+        pendingCampaignContract = _campaign;
+        campaignActivationTime  = block.timestamp + CAMPAIGN_TIMELOCK;
+        emit CampaignContractProposed(_campaign, campaignActivationTime);
+    }
+
+    /**
+     * @notice SC-H3: Execute a proposed campaign contract change after the timelock expires.
+     */
+    function executeCampaignContract() external onlyOwner {
+        require(pendingCampaignContract != address(0), "No pending campaign");
+        require(block.timestamp >= campaignActivationTime, "Timelock not expired");
         usdc.forceApprove(campaignContract, 0);
-        campaignContract = _campaign;
-        usdc.forceApprove(_campaign, type(uint256).max);
-        emit CampaignContractUpdated(_campaign);
+        campaignContract = pendingCampaignContract;
+        usdc.forceApprove(campaignContract, type(uint256).max);
+        pendingCampaignContract = address(0);
+        campaignActivationTime  = 0;
+        emit CampaignContractUpdated(campaignContract);
+    }
+
+    /**
+     * @notice SC-H3: Cancel a pending campaign contract change before it is executed.
+     */
+    function cancelCampaignContractChange() external onlyOwner {
+        require(pendingCampaignContract != address(0), "No pending change");
+        pendingCampaignContract = address(0);
+        campaignActivationTime  = 0;
+        emit CampaignContractChangeCancelled();
     }
 
     function setPlatformWallet(address _wallet) external onlyOwner {

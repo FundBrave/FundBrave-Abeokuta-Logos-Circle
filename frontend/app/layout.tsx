@@ -27,7 +27,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-[#09011a] text-white antialiased">
+      <body className="min-h-screen bg-[#0A0E1A] text-white antialiased">
         <ErrorBoundary>
           <Providers>{children}</Providers>
         </ErrorBoundary>
