@@ -64,8 +64,32 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
     uint256 public goalMax;   // Upper bound of goal range (USDC, 6 decimals)
     uint256 public deadline;
 
+    /// @notice Minimum donation to prevent dust (1 USDC)
+    uint256 public constant MIN_DONATION = 1e6;
+
+    /// @notice Maximum deadline extension window (2 years from now)
+    uint256 public constant MAX_DEADLINE_EXTENSION = 730 days;
+
+    /// @notice Timelock delay before a proposed swap adapter can be activated (48 hours)
+    uint256 public constant ADAPTER_TIMELOCK = 48 hours;
+
     uint256 public totalRaised;    // Cumulative USDC received
     uint256 public donorCount;     // Unique donor addresses
+
+    // ─── Swap adapter timelock ───────────────────────────────────────────────
+
+    /// @notice Pending swap adapter address; address(0) means no change in progress
+    address public pendingSwapAdapter;
+
+    // ─── Circuit breaker manual halt ─────────────────────────────────────────
+
+    /// @notice L7: Persistent halt flag that survives transaction reverts.
+    /// The CircuitBreaker library's `triggered` flag is set inside checkTransaction(),
+    /// which always runs in a reverting context — so it rolls back and is never persisted.
+    /// This flag gives the owner a manual lever that actually latches.
+    bool private _cbHalted;
+    /// @notice Earliest timestamp at which pendingSwapAdapter can be activated
+    uint256 public swapAdapterActivationTime;
 
     DonationRecord[] private _allDonations;
     mapping(address => uint256) public donorTotalContributed;
@@ -88,6 +112,10 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
     event BridgeUpdated(address indexed newBridge);
     event StakingPoolUpdated(address indexed newPool);
     event DeadlineExtended(uint256 newDeadline);
+    event SwapAdapterUpdated(address indexed newAdapter);
+    event SwapAdapterProposed(address indexed proposedAdapter, uint256 activationTime);
+    event SwapAdapterChangeCancelled();
+    event CircuitBreakerHalted();
 
     // ─────────────────────────────────────────────
     //  Errors
@@ -134,6 +162,11 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         goalMax = _goalMax;
         deadline = _deadline;
 
+        // SC-M3: Emit initial adapter address for off-chain indexers
+        if (_swap != address(0)) {
+            emit SwapAdapterUpdated(_swap);
+        }
+
         // Circuit breaker: max single tx = 5k USDC, hourly = 10k, daily = 30k
         _circuitBreaker.initialize(
             5_000 * 1e6,
@@ -172,6 +205,7 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         onlyActive
     {
         if (amount == 0) revert ZeroAmount();
+        require(amount >= MIN_DONATION, "Below minimum donation");
         _checkCircuitBreaker(amount);
 
         usdc.safeTransferFrom(msg.sender, address(this), amount);
@@ -196,18 +230,24 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         if (amountIn == 0) revert ZeroAmount();
 
         // If already USDC, skip swap path
+        // L2: Reject up-front if no swap adapter is configured
+        require(address(swapAdapter) != address(0), "Swap adapter not set");
+
         if (tokenIn == address(usdc)) {
-            usdc.safeTransferFrom(msg.sender, address(this), amountIn);
+            require(amountIn >= MIN_DONATION, "Below minimum donation");
             _checkCircuitBreaker(amountIn);
+            usdc.safeTransferFrom(msg.sender, address(this), amountIn);
             _recordDonation(msg.sender, amountIn, tokenIn, "base");
             return;
         }
 
+        require(amountIn >= MIN_DONATION, "Below minimum donation");
         IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
         IERC20(tokenIn).forceApprove(address(swapAdapter), amountIn);
 
-        uint256 usdcOut = swapAdapter.swapToUSDT(tokenIn, amountIn);
+        uint256 usdcOut = swapAdapter.swapToUSDC(tokenIn, amountIn);
         if (usdcOut == 0) revert ZeroAmount();
+        require(usdcOut >= MIN_DONATION, "Below minimum donation");
 
         _checkCircuitBreaker(usdcOut);
         _recordDonation(msg.sender, usdcOut, tokenIn, "base");
@@ -228,9 +268,12 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         onlyActive
     {
         if (msg.value == 0) revert ZeroAmount();
+        // L2: Reject up-front if no swap adapter is configured
+        require(address(swapAdapter) != address(0), "Swap adapter not set");
 
-        uint256 usdcOut = swapAdapter.swapNativeToUSDT{value: msg.value}();
+        uint256 usdcOut = swapAdapter.swapNativeToUSDC{value: msg.value}();
         if (usdcOut == 0) revert ZeroAmount();
+        require(usdcOut >= MIN_DONATION, "Below minimum donation");
 
         _checkCircuitBreaker(usdcOut);
         _recordDonation(msg.sender, usdcOut, address(0), "base");
@@ -252,8 +295,20 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         uint256 amount,
         string calldata sourceChain
     ) external nonReentrant whenNotPaused onlyActive onlyBridgeOrStaking {
+        // SC-C1: Reject zero donor address
+        require(donor != address(0), "Invalid donor");
         if (amount == 0) revert ZeroAmount();
+        // SC-C2: Enforce same minimum as direct donations
+        require(amount >= MIN_DONATION, "Below minimum donation");
+
+        // SC-H3: Check circuit breaker BEFORE pulling funds.
         _checkCircuitBreaker(amount);
+
+        // M1: Pull USDC from the caller (bridge/staking must have approved this contract).
+        // This is a pull pattern — the exact amount is atomically transferred here,
+        // proving the funds were genuinely sent rather than relying on a pre-existing balance.
+        usdc.safeTransferFrom(msg.sender, address(this), amount);
+
         _recordDonation(donor, amount, address(usdc), sourceChain);
     }
 
@@ -310,7 +365,10 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
     }
 
     function _checkCircuitBreaker(uint256 amount) private {
-        if (_circuitBreaker.isTriggered()) revert CircuitBreakerActive();
+        // L7: The CB library's `triggered` flag is set inside checkTransaction() which always
+        // runs in a reverting context — EVM rolls it back, so it can never persist.
+        // _cbHalted is our persistent manual halt that survives reverts.
+        if (_cbHalted) revert CircuitBreakerActive();
         if (!_circuitBreaker.checkTransaction(amount)) revert TransactionBlocked();
     }
 
@@ -391,22 +449,60 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         emit TreasuryUpdated(_treasury);
     }
 
+    /// @notice SC-H2: Zero address rejected; a zero bridge address would silently block all cross-chain donations.
     function setBridgeContract(address _bridge) external onlyOwner {
+        require(_bridge != address(0), "Invalid bridge");
         bridgeContract = _bridge;
         emit BridgeUpdated(_bridge);
     }
 
+    /// @notice SC-H2: Zero address rejected; a zero pool address would silently block staking yield credits.
     function setStakingPool(address _pool) external onlyOwner {
+        require(_pool != address(0), "Invalid pool");
         stakingPool = _pool;
         emit StakingPoolUpdated(_pool);
     }
 
-    function setSwapAdapter(address _swap) external onlyOwner {
-        swapAdapter = ISwapAdapter(_swap);
+    // ── Swap adapter timelock (SC-C3) ────────────────────────────────────────
+
+    /**
+     * @notice Propose a new swap adapter. The change becomes effective after ADAPTER_TIMELOCK (48h).
+     * @dev Calling again before the timelock expires overwrites the proposal and resets the clock.
+     */
+    function proposeSwapAdapter(address _swap) external onlyOwner {
+        require(_swap != address(0), "Invalid adapter");
+        pendingSwapAdapter = _swap;
+        swapAdapterActivationTime = block.timestamp + ADAPTER_TIMELOCK;
+        emit SwapAdapterProposed(_swap, swapAdapterActivationTime);
     }
 
+    /**
+     * @notice Execute a previously proposed swap adapter change after the timelock has expired.
+     */
+    function executeSwapAdapter() external onlyOwner {
+        require(pendingSwapAdapter != address(0), "No pending adapter");
+        require(block.timestamp >= swapAdapterActivationTime, "Timelock not expired");
+        address newAdapter = pendingSwapAdapter;
+        swapAdapter = ISwapAdapter(newAdapter);
+        pendingSwapAdapter = address(0);
+        swapAdapterActivationTime = 0;
+        emit SwapAdapterUpdated(newAdapter);
+    }
+
+    /**
+     * @notice Cancel a pending swap adapter change before it is executed.
+     */
+    function cancelSwapAdapterChange() external onlyOwner {
+        require(pendingSwapAdapter != address(0), "No pending change");
+        pendingSwapAdapter = address(0);
+        swapAdapterActivationTime = 0;
+        emit SwapAdapterChangeCancelled();
+    }
+
+    /// @notice SC-M4: Capped at 730 days from now to prevent accidental centuries-long lockouts.
     function extendDeadline(uint256 newDeadline) external onlyOwner {
         require(newDeadline > deadline, "Must be later");
+        require(newDeadline <= block.timestamp + MAX_DEADLINE_EXTENSION, "Deadline too far");
         deadline = newDeadline;
         emit DeadlineExtended(newDeadline);
     }
@@ -414,7 +510,14 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
     function pause() external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }
 
+    /// @notice Permanently halt all donations via the circuit breaker. Call resetCircuitBreaker to lift.
+    function haltCircuitBreaker() external onlyOwner {
+        _cbHalted = true;
+        emit CircuitBreakerHalted();
+    }
+
     function resetCircuitBreaker() external onlyOwner {
+        _cbHalted = false;
         _circuitBreaker.reset();
     }
 
@@ -426,11 +529,22 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         _circuitBreaker.updateLimits(maxTx, maxHourly, maxDaily);
     }
 
-    /// @notice Emergency drain — only callable by owner to rescue stuck tokens
+    /// @notice Emergency drain — only callable by owner to rescue stuck tokens (NOT campaign USDC)
     function emergencyWithdrawToken(address token, address to) external onlyOwner {
+        require(to != address(0), "Invalid recipient");          // L4
+        require(token != address(usdc), "Use withdrawToTreasury for USDC");
         uint256 bal = IERC20(token).balanceOf(address(this));
         require(bal > 0, "Nothing to rescue");
         IERC20(token).safeTransfer(to, bal);
+    }
+
+    /// @notice Rescue ETH accidentally sent to this contract
+    function emergencyWithdrawETH(address payable to) external onlyOwner {
+        require(to != address(0), "Invalid recipient");          // L4
+        uint256 bal = address(this).balance;
+        require(bal > 0, "No ETH to rescue");
+        (bool ok, ) = to.call{value: bal}("");
+        require(ok, "ETH transfer failed");
     }
 
     receive() external payable {}

@@ -12,6 +12,7 @@ import {
   ERC20_ABI,
   CONTRACT_ADDRESSES,
   TARGET_CHAIN_ID,
+  friendlyError,
 } from "../lib/contracts";
 import type { Address } from "viem";
 
@@ -193,7 +194,7 @@ export function useDonate() {
   }
   if (writeError && step !== "error") {
     setStep("error");
-    setErrorMsg(writeError.message);
+    setErrorMsg(friendlyError(writeError));
   }
 
   return {

@@ -107,6 +107,30 @@ async function main() {
     throw new Error("Missing USDC/Aave addresses. Set them in .env or CONFIG.");
   }
 
+  // SC-M5: Require swap adapter on mainnet — a zero address silently disables ERC20/ETH donations
+  const isMainnet = Number(chainId) === 8453;
+  if (isMainnet && (!swapAdapter || swapAdapter === ethers.ZeroAddress)) {
+    throw new Error(
+      "MAINNET_SWAP_ADAPTER env var is required for mainnet deployment. " +
+      "Set it to the deployed UniswapAdapter or OneInchAdapter address."
+    );
+  }
+
+  // SC-M6: Warn loudly if bridge address is zero — cross-chain donations will be disabled
+  const bridgeAddress = cfg.bridgeAddress;
+  if (!bridgeAddress || bridgeAddress === ethers.ZeroAddress) {
+    if (isMainnet) {
+      throw new Error(
+        "BRIDGE_ADDRESS env var is required for mainnet deployment. " +
+        "Deploy FundBraveBridge on Base first, then set BRIDGE_ADDRESS."
+      );
+    }
+    console.warn(
+      "⚠  BRIDGE_ADDRESS is not set. Cross-chain donations will be disabled until " +
+      "receiver.setBridge(BRIDGE_ADDRESS) is called after FundBraveBridge is deployed."
+    );
+  }
+
   // ── Campaign parameters ───────────────────────────────────────────────────
   const USDC_DECIMALS  = 6;
   const goalMin        = BigInt(cfg.goalMinUSDC) * BigInt(10 ** USDC_DECIMALS);
@@ -147,7 +171,6 @@ async function main() {
 
   // ── 3. Deploy AbeokutaBridgeReceiver ─────────────────────────────────────
   console.log("3. Deploying AbeokutaBridgeReceiver...");
-  const bridgeAddress = cfg.bridgeAddress;
   const ReceiverFactory = await ethers.getContractFactory("AbeokutaBridgeReceiver");
   const receiver = await ReceiverFactory.deploy(
     usdcAddress,

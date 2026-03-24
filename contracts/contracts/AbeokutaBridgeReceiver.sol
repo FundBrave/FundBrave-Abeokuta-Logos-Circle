@@ -58,6 +58,7 @@ contract AbeokutaBridgeReceiver is Ownable, ReentrancyGuard, Pausable {
     );
     event BridgeUpdated(address indexed newBridge);
     event CampaignUpdated(address indexed newCampaign);
+    event UnsupportedStakeReceived(address indexed donor, uint256 amount, uint32 srcEid);
 
     // ─── Errors ───────────────────────────────────────────────────────────────
 
@@ -73,6 +74,10 @@ contract AbeokutaBridgeReceiver is Ownable, ReentrancyGuard, Pausable {
         usdc     = IERC20(_usdc);
         campaign = IAbeokutaCampaign(_campaign);
         bridge   = _bridge;
+
+        // Approve campaign to pull USDC via safeTransferFrom in creditDonation (pull pattern, M1).
+        // When setCampaign changes the campaign address, this approval is revoked and re-granted.
+        IERC20(_usdc).approve(_campaign, type(uint256).max);
 
         // Default EID → chain name mappings (LayerZero V2 EIDs)
         eidToChainName[30101] = "ethereum";
@@ -97,7 +102,9 @@ contract AbeokutaBridgeReceiver is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @notice Handles an incoming cross-chain donation from FundBraveBridge.
-     * @dev The bridge transfers USDC to this contract, then calls this function.
+     * @dev The bridge transfers USDC to this receiver, then calls this function.
+     *      creditDonation then pulls the USDC from this contract into the campaign
+     *      via safeTransferFrom (this contract pre-approves the campaign in the constructor).
      *      The `fundraiserId` parameter is ignored (single-campaign app).
      *      The `messageHash` is for replay protection at the bridge level.
      * @param donor    Original donor address on the source chain
@@ -117,12 +124,8 @@ contract AbeokutaBridgeReceiver is Ownable, ReentrancyGuard, Pausable {
 
         string memory chainName = _chainName(srcEid);
 
-        // Approve campaign to pull USDC from this contract
-        usdc.forceApprove(address(campaign), amount);
-
-        // Forward the donation — campaign will pull USDC via creditDonation
-        // Note: creditDonation checks bridge/staking authorization; this contract
-        // must be registered via campaign.setStakingPool() or campaign.setBridgeContract()
+        // M1: Campaign pulls USDC from this contract via safeTransferFrom (approval set in constructor).
+        // No pre-transfer needed — the pull is atomic inside creditDonation.
         campaign.creditDonation(donor, amount, chainName);
 
         emit CrossChainDonationReceived(donor, amount, srcEid, chainName);
@@ -133,14 +136,15 @@ contract AbeokutaBridgeReceiver is Ownable, ReentrancyGuard, Pausable {
      *         required for full bridge interface compatibility).
      */
     function handleCrossChainStake(
-        address /* donor */,
+        address donor,
         uint256 /* fundraiserId */,
-        uint256 /* amount */,
+        uint256 amount,
         bytes32 /* messageHash */,
-        uint32 /* srcEid */
-    ) external onlyBridge {
+        uint32 srcEid
+    ) external nonReentrant whenNotPaused onlyBridge {
         // Staking is initiated same-chain only in the mini version.
         // USDC is held in this contract; owner can rescue via emergencyWithdraw.
+        emit UnsupportedStakeReceived(donor, amount, srcEid);
     }
 
     // ─── Internal ────────────────────────────────────────────────────────────
@@ -154,17 +158,23 @@ contract AbeokutaBridgeReceiver is Ownable, ReentrancyGuard, Pausable {
     // ─── Admin ───────────────────────────────────────────────────────────────
 
     function setBridge(address _bridge) external onlyOwner {
+        require(_bridge != address(0), "Invalid bridge");
         bridge = _bridge;
         emit BridgeUpdated(_bridge);
     }
 
     function setCampaign(address _campaign) external onlyOwner {
         require(_campaign != address(0), "Invalid");
+        // Revoke pull approval from old campaign, grant to new one
+        usdc.forceApprove(address(campaign), 0);
         campaign = IAbeokutaCampaign(_campaign);
+        usdc.forceApprove(_campaign, type(uint256).max);
         emit CampaignUpdated(_campaign);
     }
 
+    /// @notice SC-M2: Reject empty strings to prevent unmapped EIDs being silently overwritten with "".
     function setEidChainName(uint32 eid, string calldata name) external onlyOwner {
+        require(bytes(name).length > 0, "Empty chain name");
         eidToChainName[eid] = name;
     }
 
@@ -173,6 +183,7 @@ contract AbeokutaBridgeReceiver is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice Rescue stuck tokens (e.g. if a cross-chain stake arrived accidentally)
     function emergencyWithdraw(address token, address to) external onlyOwner {
+        require(to != address(0), "Invalid recipient");
         uint256 bal = IERC20(token).balanceOf(address(this));
         require(bal > 0, "Nothing to rescue");
         IERC20(token).safeTransfer(to, bal);

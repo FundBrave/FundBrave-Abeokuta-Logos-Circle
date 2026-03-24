@@ -13,6 +13,7 @@ import {
   CONTRACT_ADDRESSES,
   TARGET_CHAIN_ID,
   formatUSDC,
+  friendlyError,
 } from "../lib/contracts";
 
 export type StakingStep =
@@ -228,7 +229,7 @@ export function useStaking() {
   }
   if (writeError && step !== "error") {
     setStep("error");
-    setErrorMsg(writeError.message);
+    setErrorMsg(friendlyError(writeError));
   }
   if (isSuccess && step === "approving" && pendingAction?.type === "stake") {
     setStep("staking");

@@ -55,6 +55,15 @@ export const config = {
   btcPollIntervalMs: parseInt(optional_env("BTC_POLL_INTERVAL_MS", "30000")),
   solPollIntervalMs: parseInt(optional_env("SOL_POLL_INTERVAL_MS", "10000")),
 
+  // ── Bitcoin confirmations ──────────────────────────────────────────────
+  /**
+   * Minimum BTC confirmations before processing a deposit.
+   * W-C4: Default raised to 6 (industry standard ~1 hour) to guard against
+   * chain reorgs. A reorg at depth 3 could undo the BTC payment after USDC
+   * is already irreversibly credited on Base.
+   */
+  btcMinConfirmations: parseInt(optional_env("BTC_MIN_CONFIRMATIONS", "6")),
+
   // ── State ──────────────────────────────────────────────────────────────
   /** JSON file to persist processed tx hashes/signatures */
   storeFile: optional_env("STORE_FILE", path.resolve(__dirname, "..", "processed_txs.json")),
@@ -62,8 +71,25 @@ export const config = {
   // ── Price feed ─────────────────────────────────────────────────────────
   /** CoinGecko price cache TTL in ms */
   priceCacheTtlMs: parseInt(optional_env("PRICE_CACHE_TTL_MS", "60000")),
+  /**
+   * W-C3: Log a warning when using a stale price older than this (seconds).
+   * Default: 60s — at this age the price is stale but still usable.
+   */
+  stalePriceWarnSec: parseInt(optional_env("STALE_PRICE_WARN_SEC", "60")),
+  /**
+   * W-C3: Refuse to use stale prices older than this (seconds).
+   * Default: 120s — beyond 2 min in volatile markets the price error is unacceptable.
+   */
+  stalePriceMaxSec: parseInt(optional_env("STALE_PRICE_MAX_SEC", "120")),
 
   // ── Min donation threshold ─────────────────────────────────────────────
   /** Minimum USD value of a deposit to trigger a donation (avoids dust) */
   minDonationUsd: parseFloat(optional_env("MIN_DONATION_USD", "1.0")),
+
+  // ── Health check server ────────────────────────────────────────────────
+  /**
+   * W-L1: HTTP port for the /health endpoint used by Kubernetes/Docker probes.
+   * Set to 0 to disable.
+   */
+  healthPort: parseInt(optional_env("HEALTH_PORT", "3001")),
 } as const;

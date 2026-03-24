@@ -3,7 +3,6 @@ const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ["@rainbow-me/rainbowkit"],
   webpack: (config) => {
-    // Suppress optional native deps that aren't needed in the browser
     config.resolve.fallback = {
       ...config.resolve.fallback,
       "pino-pretty": false,
@@ -14,6 +13,8 @@ const nextConfig = {
     };
     return config;
   },
+  // Security headers are set dynamically per-request in middleware.ts
+  // (which generates a per-request CSP nonce — not possible in static headers here)
 };
 
 module.exports = nextConfig;

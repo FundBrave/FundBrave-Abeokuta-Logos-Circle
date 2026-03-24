@@ -5,6 +5,11 @@
  *   2. USDC-SPL transfers to the watch address's associated token account
  *
  * Uses Solana JSON-RPC via @solana/web3.js.
+ *
+ * W-H1: Token amounts parsed with Number() + finite validation (was parseInt).
+ * W-H2: API calls wrapped with exponential-backoff retry.
+ * W-H2: Consecutive failure alerting via FailureTracker.
+ * W-M1: Solana connection health verified at poll start.
  */
 
 import {
@@ -14,13 +19,21 @@ import {
 } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { config } from "../config";
-import { isSolProcessed, markSolProcessed } from "../store";
+import { isSolProcessed, markSolPending, markSolProcessed, clearSolPending } from "../store";
 import { getSolPrice } from "../price";
 import { donateToCampaign } from "../contract";
+import { withRetry, FailureTracker } from "../utils";
+import { logger } from "../logger";
 
 const connection = new Connection(config.solRpcUrl, "confirmed");
 const watchPubkey = config.solAddress ? new PublicKey(config.solAddress) : null;
 const usdcMint = new PublicKey(config.solUsdcMint);
+
+const SOL_PAGE_SIZE = 20;
+const SOL_MAX_PAGES = 10; // max 200 signatures per poll cycle
+
+const _rpcFailures    = new FailureTracker("sol-rpc");
+const _donateFailures = new FailureTracker("sol-donate");
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -31,6 +44,19 @@ function lamportsToSol(lamports: number): number {
 // USDC on Solana has 6 decimals (same as EVM USDC)
 function usdcRawToFloat(raw: number): number {
   return raw / 1e6;
+}
+
+/**
+ * W-H1: Parse a raw token amount string to a number with validation.
+ * `parseInt` was replaced because it truncates decimals and returns NaN
+ * for non-numeric strings without throwing.
+ */
+function parseTokenAmount(raw: string | undefined, label: string): number {
+  const n = Number(raw ?? "0");
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`Invalid ${label} token amount: ${JSON.stringify(raw)}`);
+  }
+  return n;
 }
 
 /**
@@ -57,10 +83,6 @@ function getUsdcSplReceived(tx: ParsedTransactionWithMeta, ata: PublicKey): numb
   if (!tx.meta?.postTokenBalances || !tx.meta?.preTokenBalances) return 0;
 
   const ataStr = ata.toBase58();
-  const post = tx.meta.postTokenBalances.find((b) => b.owner === ataStr || b.accountIndex.toString() === ataStr);
-  const pre  = tx.meta.preTokenBalances.find((b)  => b.owner === ataStr || b.accountIndex.toString() === ataStr);
-
-  // More reliable: match by ATA account index
   const accountKeys = tx.transaction.message.accountKeys;
   const ataIdx = accountKeys.findIndex((k) => k.pubkey.toBase58() === ataStr);
   if (ataIdx === -1) return 0;
@@ -68,12 +90,12 @@ function getUsdcSplReceived(tx: ParsedTransactionWithMeta, ata: PublicKey): numb
   const postBal = tx.meta.postTokenBalances.find((b) => b.accountIndex === ataIdx);
   const preBal  = tx.meta.preTokenBalances.find((b)  => b.accountIndex === ataIdx);
 
-  const postAmt = parseInt(postBal?.uiTokenAmount?.amount ?? "0");
-  const preAmt  = parseInt(preBal?.uiTokenAmount?.amount  ?? "0");
+  // W-H1: Use Number() with validation instead of parseInt()
+  const postAmt = parseTokenAmount(postBal?.uiTokenAmount?.amount, "post");
+  const preAmt  = parseTokenAmount(preBal?.uiTokenAmount?.amount,  "pre");
+
   const net = postAmt - preAmt;
   return net > 0 ? net : 0;
-
-  void post; void pre; // suppress unused warnings
 }
 
 // ── Main poller ────────────────────────────────────────────────────────────────
@@ -81,22 +103,65 @@ function getUsdcSplReceived(tx: ParsedTransactionWithMeta, ata: PublicKey): numb
 export async function pollSol(): Promise<void> {
   if (!config.solAddress || !watchPubkey) return;
 
+  // W-M1: Verify Solana RPC connection is responsive before doing real work
+  try {
+    await withRetry(() => connection.getSlot(), 2, "sol-health-check");
+    _rpcFailures.reset();
+  } catch (err) {
+    _rpcFailures.record();
+    logger.error("[sol] Solana RPC health check failed — skipping poll", { error: String(err) });
+    return;
+  }
+
   // Derive the ATA for USDC on the watch address
   let ata: PublicKey;
   try {
     ata = getAssociatedTokenAddressSync(usdcMint, watchPubkey);
   } catch {
-    console.error("[sol] Failed to derive ATA");
+    logger.error("[sol] Failed to derive ATA");
     return;
   }
 
-  // Fetch recent signatures (up to 20 at a time)
-  let signatures: { signature: string }[];
+  // Paginate signatures newest-first, stopping when we hit an already-processed
+  // entry. This ensures we never miss deposits when > 20 txs arrive per cycle.
+  // isSolProcessed() checks the in-memory Set (processed + pending), so it stops
+  // at both fully-done and in-flight entries.
+  const signatures: { signature: string }[] = [];
+  let before: string | undefined;
+  let hitPageLimit = false;
   try {
-    signatures = await connection.getSignaturesForAddress(watchPubkey, { limit: 20 });
+    outerLoop: for (let page = 0; page < SOL_MAX_PAGES; page++) {
+      const opts = before
+        ? { limit: SOL_PAGE_SIZE, before }
+        : { limit: SOL_PAGE_SIZE };
+
+      const pageSigs = await withRetry(
+        () => connection.getSignaturesForAddress(watchPubkey!, opts),
+        3,
+        `sol-get-signatures-page-${page}`
+      );
+
+      for (const sig of pageSigs) {
+        if (isSolProcessed(sig.signature)) break outerLoop; // caught up
+        signatures.push(sig);
+      }
+
+      if (pageSigs.length < SOL_PAGE_SIZE) break; // last page
+      before = pageSigs[pageSigs.length - 1].signature;
+
+      if (page === SOL_MAX_PAGES - 1) hitPageLimit = true;
+    }
   } catch (err) {
-    console.error("[sol] Failed to fetch signatures:", err);
+    _rpcFailures.record();
+    logger.error("[sol] Failed to fetch signatures", { error: String(err) });
     return;
+  }
+
+  if (hitPageLimit) {
+    logger.warn(
+      `[sol] Pagination limit reached (${SOL_MAX_PAGES * SOL_PAGE_SIZE} sigs). ` +
+      "Older transactions may be missed — consider reducing poll interval."
+    );
   }
 
   for (const { signature } of signatures) {
@@ -104,17 +169,21 @@ export async function pollSol(): Promise<void> {
 
     let tx: ParsedTransactionWithMeta | null;
     try {
-      tx = await connection.getParsedTransaction(signature, {
-        maxSupportedTransactionVersion: 0,
-        commitment: "confirmed",
-      });
+      tx = await withRetry(
+        () => connection.getParsedTransaction(signature, {
+          maxSupportedTransactionVersion: 0,
+          commitment: "confirmed",
+        }),
+        3,
+        `sol-get-tx-${signature.slice(0, 8)}`
+      );
     } catch (err) {
-      console.error(`[sol] Failed to fetch tx ${signature}:`, err);
+      logger.error(`[sol] Failed to fetch tx`, { signature, error: String(err) });
       continue;
     }
 
     if (!tx || tx.meta?.err) {
-      markSolProcessed(signature); // failed txs can be safely ignored
+      await markSolProcessed(signature); // failed txs can be safely skipped
       continue;
     }
 
@@ -126,53 +195,72 @@ export async function pollSol(): Promise<void> {
       try {
         solPrice = await getSolPrice();
       } catch (err) {
-        console.error("[sol] Could not fetch SOL price, skipping:", err);
+        logger.error("[sol] Could not fetch SOL price — skipping tx until next poll", {
+          signature, error: String(err),
+        });
         continue;
       }
       const usdValue = solAmount * solPrice;
-      console.log(
-        `[sol] SOL deposit: ${solAmount.toFixed(6)} SOL ≈ $${usdValue.toFixed(2)} (sig: ${signature})`
-      );
+      logger.info(`[sol] SOL deposit: ${solAmount.toFixed(6)} SOL ≈ $${usdValue.toFixed(2)}`, {
+        signature, lamports, solPrice, usdValue,
+      });
 
       if (usdValue >= config.minDonationUsd) {
+        await markSolPending(signature);
         try {
           const hash = await donateToCampaign(usdValue, "sol", signature);
-          console.log(`[sol] Donation complete. Base tx: ${hash}`);
+          logger.info(`[sol] Donation complete`, { signature, baseTxHash: hash });
+          await markSolProcessed(signature);
+          _donateFailures.reset();
         } catch (err) {
-          console.error(`[sol] Donation failed for ${signature}:`, err);
-          continue; // don't mark as processed
+          _donateFailures.record();
+          logger.error(`[sol] Donation failed — will retry next poll`, {
+            signature, error: String(err),
+          });
+          await clearSolPending(signature);
         }
       } else {
-        console.log(`[sol] Below min threshold, skipping`);
+        logger.info(`[sol] Below min threshold ($${config.minDonationUsd}) — skipping`);
+        await markSolProcessed(signature);
       }
-      markSolProcessed(signature);
       continue;
     }
 
     // ── Check USDC-SPL ────────────────────────────────────────────────────
-    const usdcRaw = getUsdcSplReceived(tx, ata);
+    let usdcRaw: number;
+    try {
+      usdcRaw = getUsdcSplReceived(tx, ata);
+    } catch (err) {
+      logger.error("[sol] Failed to parse USDC-SPL amount", { signature, error: String(err) });
+      continue;
+    }
+
     if (usdcRaw > 0) {
       const usdcAmount = usdcRawToFloat(usdcRaw);
-      console.log(
-        `[sol] USDC-SPL deposit: ${usdcAmount.toFixed(2)} USDC (sig: ${signature})`
-      );
+      logger.info(`[sol] USDC-SPL deposit: ${usdcAmount.toFixed(2)} USDC`, { signature });
 
       if (usdcAmount >= config.minDonationUsd) {
+        await markSolPending(signature);
         try {
           const hash = await donateToCampaign(usdcAmount, "sol", signature);
-          console.log(`[sol] Donation complete. Base tx: ${hash}`);
+          logger.info(`[sol] Donation complete`, { signature, baseTxHash: hash });
+          await markSolProcessed(signature);
+          _donateFailures.reset();
         } catch (err) {
-          console.error(`[sol] Donation failed for ${signature}:`, err);
-          continue;
+          _donateFailures.record();
+          logger.error(`[sol] Donation failed — will retry next poll`, {
+            signature, error: String(err),
+          });
+          await clearSolPending(signature);
         }
       } else {
-        console.log(`[sol] Below min threshold, skipping`);
+        logger.info(`[sol] Below min threshold ($${config.minDonationUsd}) — skipping`);
+        await markSolProcessed(signature);
       }
-      markSolProcessed(signature);
       continue;
     }
 
     // Not a deposit to our address
-    markSolProcessed(signature);
+    await markSolProcessed(signature);
   }
 }

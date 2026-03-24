@@ -8,7 +8,11 @@ import "@rainbow-me/rainbowkit/styles.css";
 
 const config = getDefaultConfig({
   appName: "Abeokuta Logos Circle — FundBrave",
-  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "YOUR_PROJECT_ID",
+  projectId: (() => {
+    const id = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
+    if (!id) throw new Error("NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is required. Get one at https://cloud.walletconnect.com");
+    return id;
+  })(),
   chains: [baseSepolia, base, mainnet, polygon, arbitrum, optimism],
   ssr: false,
 });

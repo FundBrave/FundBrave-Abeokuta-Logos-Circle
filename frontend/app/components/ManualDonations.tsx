@@ -33,19 +33,12 @@ function CopyRow({
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(address);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback for browsers that block clipboard API without HTTPS
-      const el = document.createElement("textarea");
-      el.value = address;
-      document.body.appendChild(el);
-      el.select();
-      document.execCommand("copy");
-      document.body.removeChild(el);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      // Clipboard API not available (e.g. HTTP, iframe sandbox)
+      console.warn("Clipboard API unavailable — user must copy manually");
     }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (

@@ -37,6 +37,12 @@ export function useCampaignStats() {
         chainId:      TARGET_CHAIN_ID,
       },
     ],
+    // FE-M4: Refetch every 30 s to show live progress; staleTime prevents
+    // redundant re-fetches when multiple components use this hook simultaneously.
+    query: {
+      refetchInterval: 30_000,
+      staleTime:       15_000,
+    },
   });
 
   const campaignStats = data?.[0]?.result as

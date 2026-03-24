@@ -6,6 +6,37 @@
 import type { Address } from "viem";
 import { base, baseSepolia } from "wagmi/chains";
 
+// ─── Env var validation ────────────────────────────────────────────────────────
+//
+// IMPORTANT: Next.js only inlines NEXT_PUBLIC_* variables when accessed via
+// static literal property names: process.env.NEXT_PUBLIC_FOO.
+// Dynamic access like process.env[name] is NOT inlined and arrives as undefined
+// in the client bundle. So we pass the already-resolved value into validators.
+
+/** Validate that a resolved env var value is present. */
+function requireEnv(name: string, val: string | undefined, fallback?: string): string {
+  const resolved = val || fallback;
+  if (!resolved) {
+    throw new Error(
+      `Missing required environment variable: ${name}. ` +
+      `Check your .env.local file or deployment configuration.`
+    );
+  }
+  return resolved;
+}
+
+/** FE-C2: Validate that a resolved env var value is a valid EVM address. */
+function requireAddress(name: string, val: string | undefined, fallback?: string): Address {
+  const resolved = requireEnv(name, val, fallback);
+  if (!/^0x[a-fA-F0-9]{40}$/.test(resolved)) {
+    throw new Error(
+      `Environment variable ${name} ("${resolved}") is not a valid EVM address. ` +
+      `Expected 0x followed by 40 hex characters.`
+    );
+  }
+  return resolved as Address;
+}
+
 // ─── Chain IDs ────────────────────────────────────────────────────────────────
 
 export const TARGET_CHAIN    = baseSepolia;  // Switch to `base` for mainnet
@@ -14,12 +45,14 @@ export const TARGET_CHAIN_ID = baseSepolia.id;
 // ─── Contract Addresses ───────────────────────────────────────────────────────
 // These are populated after deployment. Update from deployments/<chainId>.json
 
+// Each process.env.NEXT_PUBLIC_* is a static literal access — Next.js inlines
+// these at compile time so they are available in the client bundle.
 const ADDRESSES_SEPOLIA = {
-  campaign:     (process.env.NEXT_PUBLIC_CAMPAIGN_ADDRESS     || "0x0000000000000000000000000000000000000000") as Address,
-  staking:      (process.env.NEXT_PUBLIC_STAKING_ADDRESS      || "0x0000000000000000000000000000000000000000") as Address,
-  usdc:         (process.env.NEXT_PUBLIC_USDC_ADDRESS         || "0xf269f54304f8DB2dB613341CC7E189B02BEf98dE") as Address,
-  treasury:     (process.env.NEXT_PUBLIC_TREASURY_ADDRESS     || "0x0000000000000000000000000000000000000000") as Address,
-  fundBraveBridge: (process.env.NEXT_PUBLIC_BRIDGE_ADDRESS    || "0xb3C210cB2075e72B10f00c41e30120480017a136") as Address,
+  campaign:        requireAddress("NEXT_PUBLIC_CAMPAIGN_ADDRESS",  process.env.NEXT_PUBLIC_CAMPAIGN_ADDRESS),
+  staking:         requireAddress("NEXT_PUBLIC_STAKING_ADDRESS",   process.env.NEXT_PUBLIC_STAKING_ADDRESS),
+  usdc:            requireAddress("NEXT_PUBLIC_USDC_ADDRESS",      process.env.NEXT_PUBLIC_USDC_ADDRESS, "0xf269f54304f8DB2dB613341CC7E189B02BEf98dE"),
+  treasury:        requireAddress("NEXT_PUBLIC_TREASURY_ADDRESS",  process.env.NEXT_PUBLIC_TREASURY_ADDRESS),
+  fundBraveBridge: requireAddress("NEXT_PUBLIC_BRIDGE_ADDRESS",    process.env.NEXT_PUBLIC_BRIDGE_ADDRESS, "0x0000000000000000000000000000000000000000"),
 };
 
 export const CONTRACT_ADDRESSES = ADDRESSES_SEPOLIA;
@@ -31,14 +64,29 @@ export const USDC_DECIMALS = 6;
 // Donations are manually converted to USDC and credited within 24–48 hours.
 
 export const MANUAL_DONATION_ADDRESSES = {
-  bitcoin: (process.env.NEXT_PUBLIC_BTC_ADDRESS || "") as string,
-  solana:  (process.env.NEXT_PUBLIC_SOL_ADDRESS || "") as string,
+  bitcoin: process.env.NEXT_PUBLIC_BTC_ADDRESS  || "",
+  solana:  process.env.NEXT_PUBLIC_SOL_ADDRESS  || "",
 };
 
 // ─── Campaign parameters ─────────────────────────────────────────────────────
 
 export const CAMPAIGN_GOAL_MIN_USDC = 1_000;  // $1,000
 export const CAMPAIGN_GOAL_MAX_USDC = 2_500;  // $2,500
+
+// ─── FE-L3: Centralized UI constants ─────────────────────────────────────────
+// Keeping these in one place ensures they stay in sync with on-chain limits.
+
+/** Minimum donation accepted by the contract ($1 USDC) */
+export const MIN_DONATION_USD = 1;
+/** Maximum per-transaction donation (circuit breaker: 5000 USDC/tx) */
+export const MAX_DONATION_USD = 5_000;
+/** FE-M2: Prompt for confirmation when donation exceeds this threshold */
+export const HIGH_VALUE_USD = 500;
+
+/** Quick-select amounts shown on the donate page */
+export const PRESET_AMOUNTS = [10, 25, 50, 100, 250] as const;
+/** Quick-select amounts shown on the stake page */
+export const STAKE_PRESETS  = [50, 100, 250, 500] as const;
 
 // ─── Supported tokens for donation ───────────────────────────────────────────
 
@@ -71,7 +119,7 @@ export const SUPPORTED_TOKENS: TokenInfo[] = [
   {
     symbol:      "DAI",
     name:        "Dai Stablecoin",
-    address:     (process.env.NEXT_PUBLIC_DAI_ADDRESS || "0xD5F45AE6088fE7DadA621C8A70F94abE3F46f7Bf") as Address,
+    address:     (process.env.NEXT_PUBLIC_DAI_ADDRESS  || "0xD5F45AE6088fE7DadA621C8A70F94abE3F46f7Bf") as Address,
     decimals:    18,
     isNative:    false,
     coingeckoId: "dai",
@@ -110,7 +158,7 @@ export const SOURCE_CHAINS: SourceChain[] = [
     chainId:        84532,
     lzEid:          40245,
     icon:           "🔵",
-    usdcAddress:    (process.env.NEXT_PUBLIC_USDC_ADDRESS || "0xf269f54304f8DB2dB613341CC7E189B02BEf98dE") as Address,
+    usdcAddress:    (process.env.NEXT_PUBLIC_USDC_ADDRESS   || "0xf269f54304f8DB2dB613341CC7E189B02BEf98dE") as Address,
     bridgeAddress:  (process.env.NEXT_PUBLIC_BRIDGE_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
     nativeCurrency: "ETH",
   },
@@ -413,12 +461,50 @@ export function shortenAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+// Cast to number so TypeScript doesn't emit TS2367 when TARGET_CHAIN_ID is a literal type
+const _chainId = TARGET_CHAIN_ID as number;
+
 export function getExplorerUrl(txHash: string): string {
-  return `https://sepolia.basescan.org/tx/${txHash}`;
+  const base = _chainId === 8453
+    ? "https://basescan.org"
+    : "https://sepolia.basescan.org";
+  return `${base}/tx/${txHash}`;
 }
 
 export function getAddressExplorerUrl(address: string): string {
-  return `https://sepolia.basescan.org/address/${address}`;
+  const base = _chainId === 8453
+    ? "https://basescan.org"
+    : "https://sepolia.basescan.org";
+  return `${base}/address/${address}`;
+}
+
+/**
+ * FE-H2: Map raw wallet/contract errors to user-friendly messages.
+ * Prevents exposing internal revert reasons or wallet internals in the UI.
+ */
+export function friendlyError(err: unknown): string {
+  const msg = err instanceof Error
+    ? err.message
+    : (typeof err === "string" ? err : "Unknown error");
+  if (/user rejected|user denied|cancelled/i.test(msg))
+    return "Transaction cancelled.";
+  if (/insufficient funds/i.test(msg))
+    return "Insufficient funds for this transaction.";
+  if (/ERC20InsufficientAllowance/i.test(msg))
+    return "Token allowance insufficient — please approve and try again.";
+  if (/ERC20InsufficientBalance/i.test(msg))
+    return "Insufficient token balance.";
+  if (/CircuitBreaker|rate.?limit/i.test(msg))
+    return "Transaction exceeds the rate limit. Try a smaller amount or wait before retrying.";
+  if (/execution reverted/i.test(msg))
+    return "Transaction was rejected by the contract. Check your balance and try again.";
+  if (/network changed|chain mismatch/i.test(msg))
+    return "Network changed — please reconnect your wallet.";
+  if (/nonce/i.test(msg))
+    return "Transaction ordering error — please reset your wallet activity and try again.";
+  if (/gas/i.test(msg))
+    return "Gas estimation failed — the transaction may revert.";
+  return "Transaction failed. Please try again.";
 }
 
 // ─── Bridge ABI (FundBraveBridge on source chains) ────────────────────────────

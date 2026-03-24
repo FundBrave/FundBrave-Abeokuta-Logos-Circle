@@ -4,6 +4,17 @@ import { useReadContract } from "wagmi";
 import { CAMPAIGN_ABI, CONTRACT_ADDRESSES, TARGET_CHAIN_ID, shortenAddress, formatUSDC } from "../lib/contracts";
 import { ExternalLink } from "lucide-react";
 
+const ALLOWED_CHAINS = new Set([
+  "base", "ethereum", "polygon", "arbitrum", "optimism",
+  "base-sepolia", "ethereum-sepolia", "polygon-amoy",
+  "rootstock", "staking-yield", "unknown",
+]);
+
+function sanitizeChainName(chain: string): string {
+  const cleaned = chain.replace(/[^a-zA-Z0-9-]/g, "").toLowerCase();
+  return ALLOWED_CHAINS.has(cleaned) ? cleaned : "unknown";
+}
+
 interface DonationRecord {
   donor:       string;
   amount:      bigint;
@@ -19,6 +30,8 @@ export function RecentDonations() {
     functionName: "getRecentDonations",
     args:         [0n, 10n],
     chainId:      TARGET_CHAIN_ID,
+    // FE-M3: Poll every 30 s so new donations appear without a page refresh
+    query: { refetchInterval: 30_000 },
   });
 
   const donations = (data as DonationRecord[] | undefined) ?? [];
@@ -57,7 +70,7 @@ export function RecentDonations() {
 
 function DonationRow({ donation }: { donation: DonationRecord }) {
   const timeAgo = formatTimeAgo(Number(donation.timestamp));
-  const chain   = donation.sourceChain || "base";
+  const chain   = sanitizeChainName(donation.sourceChain || "base");
   const isXChain = chain !== "base" && chain !== "staking-yield";
 
   return (

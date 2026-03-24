@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./interfaces/IAavePool.sol";
+import "./interfaces/IAbeokutaCampaign.sol";
 
 /**
  * @title AbeokutaStaking
@@ -47,6 +48,9 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
     uint16  public constant DEFAULT_CAUSE_SHARE  = 7900;
     /// @notice Default staker share for stakers who haven't customised (19%)
     uint16  public constant DEFAULT_STAKER_SHARE = 1900;
+
+    /// @notice Aave V3 referral code — reserved for future referral program integration
+    uint16  private constant AAVE_REFERRAL_CODE = 0;
 
     // ─────────────────────────────────────────────
     //  Per-staker yield split
@@ -112,6 +116,11 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
         uint16  causeShare,
         uint16  stakerShare
     );
+    event YieldCreditFailed(address indexed staker, uint256 causeAmount);
+    /// @notice SC-M1: Emitted when the campaign contract address is updated
+    event CampaignContractUpdated(address indexed newCampaign);
+    /// @notice SC-M1: Emitted when the platform wallet address is updated
+    event PlatformWalletUpdated(address indexed newWallet);
 
     // ─────────────────────────────────────────────
     //  Constructor
@@ -136,7 +145,10 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
         campaignContract = _campaignContract;
         platformWallet   = _platformWallet;
 
+        // L3: Use SafeERC20.forceApprove for all approvals
         IERC20(_usdc).approve(_aavePool, type(uint256).max);
+        // M1: Approve campaign to pull USDC via safeTransferFrom in creditDonation
+        IERC20(_usdc).approve(_campaignContract, type(uint256).max);
     }
 
     // ─────────────────────────────────────────────
@@ -161,9 +173,10 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
         updateReward(msg.sender)
     {
         require(amount > 0, "Amount must be > 0");
+        require(amount >= 1e6, "Minimum stake is 1 USDC");
 
         usdc.safeTransferFrom(msg.sender, address(this), amount);
-        aavePool.supply(address(usdc), amount, address(this), 0);
+        aavePool.supply(address(usdc), amount, address(this), AAVE_REFERRAL_CODE);
 
         stakerPrincipal[msg.sender] += amount;
         totalPrincipal += amount;
@@ -201,6 +214,11 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
      * @dev Callable by anyone. Silently returns when no yield is available.
      */
     function harvestAndDistribute() public nonReentrant whenNotPaused {
+        // M2: If no stakers, skip — withdrawing yield with nobody to distribute to would
+        // leave distributable USDC stranded in this contract with no accounting.
+        // Leave the yield accumulating in Aave; it will be harvestable once stakers return.
+        if (totalPrincipal == 0) return;
+
         uint256 aBalance = aUsdc.balanceOf(address(this));
         if (aBalance <= totalPrincipal) return;
 
@@ -260,22 +278,19 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
             usdc.safeTransfer(msg.sender, stakerAmount);
         }
 
-        // Transfer cause portion to campaign then notify it.
-        // Non-reverting call: if campaign is paused/ended the USDC still lands
-        // in the treasury multisig where organisers can account for it.
+        // M1: Campaign pulls USDC from this contract via safeTransferFrom (approval set in constructor).
+        // If creditDonation reverts (campaign paused/ended), the pull never happened so USDC stays here.
+        // The catch block then redirects the cause portion to the staker so yield is never permanently stuck.
         if (causeAmount > 0 && campaignContract != address(0)) {
-            usdc.safeTransfer(campaignContract, causeAmount);
-            // solhint-disable-next-line avoid-low-level-calls
-            // solhint-disable-next-line no-unused-vars
-            (bool _ok,) = campaignContract.call(
-                abi.encodeWithSignature(
-                    "creditDonation(address,uint256,string)",
-                    msg.sender,
-                    causeAmount,
-                    "staking-yield"
-                )
-            );
-            // _ok intentionally unused — USDC already transferred to treasury
+            try IAbeokutaCampaign(campaignContract).creditDonation(
+                msg.sender,
+                causeAmount,
+                "staking-yield"
+            ) {} catch {
+                // Campaign unavailable — redirect cause portion to staker (USDC still in this contract)
+                usdc.safeTransfer(msg.sender, causeAmount);
+                emit YieldCreditFailed(msg.sender, causeAmount);
+            }
         }
 
         emit StakerYieldClaimed(msg.sender, stakerAmount, causeAmount);
@@ -301,6 +316,10 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
      *
      * Note: changing your split applies to ALL unsettled yield since your last
      * stake / unstake / claim. The UI shows this prominently.
+     *
+     * Note: This function is intentionally not gated by whenNotPaused, allowing
+     * stakers to reconfigure their split even if the contract is paused. This prevents
+     * lock-in and ensures protocol responsiveness during emergency pauses.
      *
      * @param _causeShare  Basis points (0–9800) directed to the campaign
      * @param _stakerShare Basis points (0–9800) kept by you
@@ -399,23 +418,36 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
 
     function setCampaignContract(address _campaign) external onlyOwner {
         require(_campaign != address(0), "Invalid");
+        // Revoke pull approval from old campaign, grant to new one
+        usdc.forceApprove(campaignContract, 0);
         campaignContract = _campaign;
+        usdc.forceApprove(_campaign, type(uint256).max);
+        emit CampaignContractUpdated(_campaign);
     }
 
     function setPlatformWallet(address _wallet) external onlyOwner {
         require(_wallet != address(0), "Invalid");
         platformWallet = _wallet;
+        emit PlatformWalletUpdated(_wallet);
     }
 
     function pause()   external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }
 
     function revokeAaveApproval() external onlyOwner {
-        usdc.approve(address(aavePool), 0);
+        usdc.forceApprove(address(aavePool), 0);         // L3
     }
 
     function restoreAaveApproval() external onlyOwner {
-        usdc.approve(address(aavePool), type(uint256).max);
+        usdc.forceApprove(address(aavePool), type(uint256).max);  // L3
+    }
+
+    /// @notice M3: Rescue stuck tokens (e.g. un-harvested aUSDC yield when no stakers remain)
+    function emergencyWithdraw(address token, address to) external onlyOwner {
+        require(to != address(0), "Invalid recipient");
+        uint256 bal = IERC20(token).balanceOf(address(this));
+        require(bal > 0, "Nothing to rescue");
+        IERC20(token).safeTransfer(to, bal);
     }
 }
 

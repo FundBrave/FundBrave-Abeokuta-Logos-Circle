@@ -18,11 +18,13 @@ import {
   getExplorerUrl,
   formatUSDC,
   isBaseChain,
+  PRESET_AMOUNTS,
+  MIN_DONATION_USD,
+  MAX_DONATION_USD,
+  HIGH_VALUE_USD,
   type TokenInfo,
 } from "../lib/contracts";
 import type { Address } from "viem";
-
-const PRESET_AMOUNTS = [10, 25, 50, 100, 250];
 
 export default function DonatePage() {
   const { address, isConnected, chain } = useAccount();
@@ -32,16 +34,36 @@ export default function DonatePage() {
   const [selectedToken, setSelectedToken] = useState<TokenInfo>(SUPPORTED_TOKENS[0]);
   const [amount, setAmount] = useState("");
   const [isApprovalStep, setIsApprovalStep] = useState(false);
+  const [showHighValueWarning, setShowHighValueWarning] = useState(false);
 
   const usdcDecimals = selectedToken.decimals;
-  const parsedAmount = amount
-    ? BigInt(Math.floor(parseFloat(amount) * 10 ** usdcDecimals))
-    : 0n;
+  const parsedAmount = (() => {
+    if (!amount) return 0n;
+    const parts = amount.split(".");
+    const whole = parts[0] || "0";
+    const frac = (parts[1] || "").padEnd(usdcDecimals, "0").slice(0, usdcDecimals);
+    try {
+      return BigInt(whole) * BigInt(10 ** usdcDecimals) + BigInt(frac);
+    } catch {
+      return 0n;
+    }
+  })();
 
   // True when user is connected to a non-Base chain (cross-chain mode)
   const isOnForeignChain = !!chain && !isBaseChain(chain.id);
   // True when user is on a completely unsupported chain (not in SOURCE_CHAINS either)
   const isOnUnknownChain = !!chain && !SOURCE_CHAINS.find((c) => c.chainId === chain.id);
+
+  // FE-H3: Reset all state when wallet disconnects to prevent stale UI
+  useEffect(() => {
+    if (!isConnected) {
+      setAmount("");
+      setIsApprovalStep(false);
+      setShowHighValueWarning(false);
+      donate.reset();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected]);
 
   // After approval tx confirms, proceed to donate
   useEffect(() => {
@@ -60,6 +82,13 @@ export default function DonatePage() {
 
   const handleDonate = () => {
     if (!parsedAmount || parsedAmount === 0n) return;
+
+    // FE-M2: Ask for confirmation on high-value donations
+    if (!showHighValueWarning && parseFloat(amount) >= HIGH_VALUE_USD) {
+      setShowHighValueWarning(true);
+      return;
+    }
+    setShowHighValueWarning(false);
 
     if (selectedToken.isNative) {
       donate.donateETH(parsedAmount);
@@ -152,7 +181,9 @@ export default function DonatePage() {
         )}
 
         {/* ── Same-chain mode (Base / Base Sepolia) ── */}
-        {isConnected && !isOnForeignChain && (
+        {/* FE-H5: Also guard against unknown chains — isOnUnknownChain implies isOnForeignChain,
+            but explicit guard clarifies intent and protects against future logic changes */}
+        {isConnected && !isOnForeignChain && !isOnUnknownChain && (
           <>
             {/* Token selector */}
             <div className="mb-6">
@@ -184,12 +215,17 @@ export default function DonatePage() {
               <label className="block text-sm text-white/60 mb-2">Amount</label>
               <div className="relative">
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
+                  onChange={(e) => {
+                    // FE-H1: Strip non-numeric chars (prevents e, +, -, scientific notation)
+                    const sanitized = e.target.value.replace(/[^0-9.]/g, "");
+                    // Only allow one decimal point
+                    const parts = sanitized.split(".");
+                    setAmount(parts.length > 2 ? parts[0] + "." + parts.slice(1).join("") : sanitized);
+                  }}
                   placeholder="0.00"
-                  min="0"
-                  step="any"
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-lg font-medium focus:outline-none focus:border-[#8762fa] transition-colors pr-20"
                 />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40 font-medium">
@@ -209,6 +245,13 @@ export default function DonatePage() {
                   </button>
                 ))}
               </div>
+
+              {amount && parseFloat(amount) > 0 && parseFloat(amount) < MIN_DONATION_USD && (
+                <p className="text-amber-400 text-xs mt-2">Minimum donation is ${MIN_DONATION_USD} USDC</p>
+              )}
+              {amount && parseFloat(amount) > MAX_DONATION_USD && (
+                <p className="text-amber-400 text-xs mt-2">Maximum per-transaction is ${MAX_DONATION_USD.toLocaleString()} USDC (circuit breaker limit)</p>
+              )}
             </div>
 
             {/* Cross-chain info pill — informational for users on Base */}
@@ -228,6 +271,32 @@ export default function DonatePage() {
                 Switch network in your wallet to donate from another chain.
               </p>
             </div>
+
+            {/* FE-M2: High-value confirmation prompt */}
+            {showHighValueWarning && !donate.isProcessing && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-4">
+                <p className="text-amber-400 text-sm font-medium mb-1">Confirm large donation</p>
+                <p className="text-white/60 text-xs mb-3">
+                  You are about to donate{" "}
+                  <strong className="text-white">{amount} {selectedToken.symbol}</strong>.
+                  This transaction is permanent and non-refundable. Are you sure?
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleDonate}
+                    className="btn-primary text-sm flex-1"
+                  >
+                    Yes, donate {amount} {selectedToken.symbol}
+                  </button>
+                  <button
+                    onClick={() => setShowHighValueWarning(false)}
+                    className="btn-secondary text-sm flex-1"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Error message */}
             {donate.errorMsg && (
@@ -263,7 +332,7 @@ export default function DonatePage() {
             {!isApprovalStep && (
               <button
                 onClick={handleDonate}
-                disabled={!amount || parseFloat(amount) <= 0 || donate.isProcessing}
+                disabled={!amount || parseFloat(amount) < MIN_DONATION_USD || parseFloat(amount) > MAX_DONATION_USD || donate.isProcessing || showHighValueWarning}
                 className="btn-primary w-full text-base disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {donate.isProcessing ? (

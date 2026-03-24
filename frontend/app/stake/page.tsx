@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAccount } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import Link from "next/link";
@@ -18,9 +18,7 @@ import {
 import { useStaking } from "../hooks/useStaking";
 import { useCampaignStats } from "../hooks/useCampaignStats";
 import { FundBraveLogo } from "../components/FundBraveLogo";
-import { getExplorerUrl, formatUSDC } from "../lib/contracts";
-
-const STAKE_PRESETS = [50, 100, 250, 500];
+import { getExplorerUrl, formatUSDC, STAKE_PRESETS } from "../lib/contracts";
 
 // ─── Split configurator sub-component ────────────────────────────────────────
 
@@ -99,6 +97,7 @@ function SplitConfigurator({
               value={causeBps}
               onChange={(e) => setCauseBps(Number(e.target.value))}
               className="w-full accent-[#450cf0] cursor-pointer"
+              aria-label={`Yield split: ${causePct}% to campaign, ${stakerPct}% to you`}
             />
 
             {/* Visual split bar */}
@@ -195,9 +194,27 @@ export default function StakePage() {
   const [tab, setTab]       = useState<"stake" | "unstake">("stake");
   const [amount, setAmount] = useState("");
 
-  const parsedAmount = amount
-    ? BigInt(Math.floor(parseFloat(amount) * 1_000_000))
-    : 0n;
+  // FE-H3: Reset all state when wallet disconnects
+  useEffect(() => {
+    if (!isConnected) {
+      setAmount("");
+      setTab("stake");
+      staking.reset();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected]);
+
+  const parsedAmount = (() => {
+    if (!amount) return 0n;
+    const parts = amount.split(".");
+    const whole = parts[0] || "0";
+    const frac = (parts[1] || "").padEnd(6, "0").slice(0, 6);
+    try {
+      return BigInt(whole) * 1_000_000n + BigInt(frac);
+    } catch {
+      return 0n;
+    }
+  })();
 
   const handleStake   = () => { if (parsedAmount) staking.stakeUSDC(parsedAmount); };
   const handleUnstake = () => { if (parsedAmount) staking.unstakeUSDC(parsedAmount); };
@@ -324,12 +341,16 @@ export default function StakePage() {
               </div>
               <div className="relative">
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
+                  onChange={(e) => {
+                    // FE-H1: Strip non-numeric chars (prevents e, +, -, scientific notation)
+                    const sanitized = e.target.value.replace(/[^0-9.]/g, "");
+                    const parts = sanitized.split(".");
+                    setAmount(parts.length > 2 ? parts[0] + "." + parts.slice(1).join("") : sanitized);
+                  }}
                   placeholder="0.00"
-                  min="0"
-                  step="any"
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-lg font-medium focus:outline-none focus:border-[#8762fa] transition-colors pr-16"
                 />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40">USDC</span>

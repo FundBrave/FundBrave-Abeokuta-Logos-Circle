@@ -23,7 +23,9 @@ module.exports = {
 
     // Base Sepolia (testnet)
     baseSepolia: {
-      url: `https://base-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
+      url: ALCHEMY_API_KEY
+        ? `https://base-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}`
+        : (process.env.BASE_SEPOLIA_RPC || "https://sepolia.base.org"),
       accounts: [PRIVATE_KEY],
       chainId: 84532,
     },

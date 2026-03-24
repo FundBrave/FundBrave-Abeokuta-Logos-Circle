@@ -1,5 +1,6 @@
 /**
  * AbeokutaStaking Tests
+ * Full coverage: staking, unstaking, yield harvest/claim, split configuration, admin.
  */
 
 const { expect } = require("chai");
@@ -17,12 +18,15 @@ describe("AbeokutaStaking", function () {
   const DISTRIBUTABLE   = 9800n;
   const TOTAL_BASIS     = 10000n;
 
+  // Captured in beforeEach for use in constructor tests
+  let usdcAddress, aaveAddress, aTokenAddress, campaignAddress;
+
   beforeEach(async function () {
     [owner, staker1, staker2, platformWallet, other] = await ethers.getSigners();
 
     const MockUSDC = await ethers.getContractFactory("MockUSDC");
     mockUSDC = await MockUSDC.deploy();
-    const usdcAddress = await mockUSDC.getAddress();
+    usdcAddress = await mockUSDC.getAddress();
 
     const MockSwap = await ethers.getContractFactory("MockSwapAdapter");
     const mockSwap = await MockSwap.deploy(usdcAddress);
@@ -30,29 +34,20 @@ describe("AbeokutaStaking", function () {
 
     const MockAave = await ethers.getContractFactory("MockAavePool");
     mockAavePool = await MockAave.deploy(usdcAddress);
-    const aaveAddress = await mockAavePool.getAddress();
-    const aToken = await mockAavePool.aToken();
+    aaveAddress = await mockAavePool.getAddress();
+    aTokenAddress = await mockAavePool.aToken();
 
     const now = await time.latest();
     const deadline = now + 60 * 86400;
     const Campaign = await ethers.getContractFactory("AbeokutaCampaign");
     campaign = await Campaign.deploy(
-      usdcAddress,
-      await mockSwap.getAddress(),
-      owner.address,
-      GOAL_MIN,
-      GOAL_MAX,
-      deadline
+      usdcAddress, await mockSwap.getAddress(), owner.address, GOAL_MIN, GOAL_MAX, deadline
     );
-    const campaignAddress = await campaign.getAddress();
+    campaignAddress = await campaign.getAddress();
 
     const Staking = await ethers.getContractFactory("AbeokutaStaking");
     staking = await Staking.deploy(
-      aaveAddress,
-      usdcAddress,
-      aToken,
-      campaignAddress,
-      platformWallet.address
+      aaveAddress, usdcAddress, aTokenAddress, campaignAddress, platformWallet.address
     );
     const stakingAddress = await staking.getAddress();
 
@@ -67,11 +62,48 @@ describe("AbeokutaStaking", function () {
   // ─── helpers ─────────────────────────────────────────────────────────────
 
   async function simulateYield(yieldAmt) {
-    const aaveAddr    = await mockAavePool.getAddress();
-    const stakingAddr = await staking.getAddress();
-    await mockUSDC.mint(aaveAddr, yieldAmt);
-    await mockAavePool.simulateYield(stakingAddr, yieldAmt);
+    await mockUSDC.mint(aaveAddress, yieldAmt);
+    await mockAavePool.simulateYield(await staking.getAddress(), yieldAmt);
   }
+
+  // ─── Constructor ─────────────────────────────────────────────────────────
+
+  describe("Constructor", function () {
+    it("reverts with zero aavePool", async function () {
+      const Staking = await ethers.getContractFactory("AbeokutaStaking");
+      await expect(
+        Staking.deploy(ethers.ZeroAddress, usdcAddress, aTokenAddress, campaignAddress, platformWallet.address)
+      ).to.be.revertedWith("Invalid Aave pool");
+    });
+
+    it("reverts with zero usdc", async function () {
+      const Staking = await ethers.getContractFactory("AbeokutaStaking");
+      await expect(
+        Staking.deploy(aaveAddress, ethers.ZeroAddress, aTokenAddress, campaignAddress, platformWallet.address)
+      ).to.be.revertedWith("Invalid USDC");
+    });
+
+    it("reverts with zero aUsdc", async function () {
+      const Staking = await ethers.getContractFactory("AbeokutaStaking");
+      await expect(
+        Staking.deploy(aaveAddress, usdcAddress, ethers.ZeroAddress, campaignAddress, platformWallet.address)
+      ).to.be.revertedWith("Invalid aUSDC");
+    });
+
+    it("reverts with zero campaign", async function () {
+      const Staking = await ethers.getContractFactory("AbeokutaStaking");
+      await expect(
+        Staking.deploy(aaveAddress, usdcAddress, aTokenAddress, ethers.ZeroAddress, platformWallet.address)
+      ).to.be.revertedWith("Invalid campaign");
+    });
+
+    it("reverts with zero platform wallet", async function () {
+      const Staking = await ethers.getContractFactory("AbeokutaStaking");
+      await expect(
+        Staking.deploy(aaveAddress, usdcAddress, aTokenAddress, campaignAddress, ethers.ZeroAddress)
+      ).to.be.revertedWith("Invalid platform wallet");
+    });
+  });
 
   // ─── Deployment ──────────────────────────────────────────────────────────
 
@@ -90,7 +122,7 @@ describe("AbeokutaStaking", function () {
     });
   });
 
-  // ─── stake / unstake ─────────────────────────────────────────────────────
+  // ─── stake ───────────────────────────────────────────────────────────────
 
   describe("stake", function () {
     it("deposits USDC into Aave and tracks principal", async function () {
@@ -102,25 +134,73 @@ describe("AbeokutaStaking", function () {
       expect(await staking.totalPrincipal()).to.equal(amount);
     });
 
+    it("second stake by same staker accumulates principal correctly", async function () {
+      await staking.connect(staker1).stake(300n * ONE_USDC);
+      await staking.connect(staker1).stake(200n * ONE_USDC);
+      expect(await staking.stakerPrincipal(staker1.address)).to.equal(500n * ONE_USDC);
+      expect(await staking.totalPrincipal()).to.equal(500n * ONE_USDC);
+    });
+
     it("reverts on zero amount", async function () {
       await expect(staking.connect(staker1).stake(0))
         .to.be.revertedWith("Amount must be > 0");
     });
+
+    it("reverts below 1 USDC minimum", async function () {
+      await expect(staking.connect(staker1).stake(ONE_USDC - 1n))
+        .to.be.revertedWith("Minimum stake is 1 USDC");
+    });
+
+    it("accepts exactly 1 USDC", async function () {
+      await expect(staking.connect(staker1).stake(ONE_USDC))
+        .to.emit(staking, "Staked")
+        .withArgs(staker1.address, ONE_USDC);
+    });
+
+    it("reverts when paused", async function () {
+      await staking.pause();
+      await expect(staking.connect(staker1).stake(100n * ONE_USDC))
+        .to.be.revertedWithCustomError(staking, "EnforcedPause");
+    });
   });
 
+  // ─── unstake ─────────────────────────────────────────────────────────────
+
   describe("unstake", function () {
-    it("returns USDC principal", async function () {
+    it("returns USDC principal and emits Unstaked", async function () {
       const amount = 300n * ONE_USDC;
       await staking.connect(staker1).stake(amount);
       const before = await mockUSDC.balanceOf(staker1.address);
-      await staking.connect(staker1).unstake(amount);
+      await expect(staking.connect(staker1).unstake(amount))
+        .to.emit(staking, "Unstaked")
+        .withArgs(staker1.address, amount);
       expect(await mockUSDC.balanceOf(staker1.address) - before).to.equal(amount);
+    });
+
+    it("decrements stakerPrincipal and totalPrincipal", async function () {
+      await staking.connect(staker1).stake(500n * ONE_USDC);
+      await staking.connect(staker1).unstake(200n * ONE_USDC);
+      expect(await staking.stakerPrincipal(staker1.address)).to.equal(300n * ONE_USDC);
+      expect(await staking.totalPrincipal()).to.equal(300n * ONE_USDC);
+    });
+
+    it("reverts on zero amount", async function () {
+      await staking.connect(staker1).stake(100n * ONE_USDC);
+      await expect(staking.connect(staker1).unstake(0))
+        .to.be.revertedWith("Amount must be > 0");
     });
 
     it("reverts when amount exceeds stake", async function () {
       await staking.connect(staker1).stake(100n * ONE_USDC);
       await expect(staking.connect(staker1).unstake(200n * ONE_USDC))
         .to.be.revertedWith("Insufficient stake");
+    });
+
+    it("reverts when paused", async function () {
+      await staking.connect(staker1).stake(100n * ONE_USDC);
+      await staking.pause();
+      await expect(staking.connect(staker1).unstake(100n * ONE_USDC))
+        .to.be.revertedWithCustomError(staking, "EnforcedPause");
     });
   });
 
@@ -136,19 +216,78 @@ describe("AbeokutaStaking", function () {
       await staking.harvestAndDistribute();
       const platformAfter = await mockUSDC.balanceOf(platformWallet.address);
 
-      const expectedPlatform = (yieldAmt * 200n) / TOTAL_BASIS;   // 2 USDC
-      const expectedDistrib  = yieldAmt - expectedPlatform;         // 98 USDC
+      const expectedPlatform = (yieldAmt * 200n) / TOTAL_BASIS;
+      const expectedDistrib  = yieldAmt - expectedPlatform;
 
       expect(platformAfter - platformBefore).to.equal(expectedPlatform);
 
-      // Distributable pool is in accumulator — verify via pendingYield
       const [stakerPortion, causePortion] = await staking.pendingYield(staker1.address);
       expect(stakerPortion + causePortion).to.equal(expectedDistrib);
     });
 
-    it("no-ops when no yield", async function () {
+    it("emits YieldHarvested with correct amounts", async function () {
+      await staking.connect(staker1).stake(1_000n * ONE_USDC);
+      const yieldAmt = 100n * ONE_USDC;
+      await simulateYield(yieldAmt);
+
+      const platformAmount = (yieldAmt * 200n) / TOTAL_BASIS;
+      const distributable  = yieldAmt - platformAmount;
+
+      await expect(staking.harvestAndDistribute())
+        .to.emit(staking, "YieldHarvested")
+        .withArgs(yieldAmt, platformAmount, distributable);
+    });
+
+    it("updates lastHarvestTimestamp", async function () {
+      await staking.connect(staker1).stake(100n * ONE_USDC);
+      await simulateYield(10n * ONE_USDC);
+      const before = await time.latest();
+      await staking.harvestAndDistribute();
+      expect(await staking.lastHarvestTimestamp()).to.be.gte(before);
+    });
+
+    it("updates totalYieldGenerated", async function () {
+      await staking.connect(staker1).stake(100n * ONE_USDC);
+      await simulateYield(50n * ONE_USDC);
+      await staking.harvestAndDistribute();
+      expect(await staking.totalYieldGenerated()).to.equal(50n * ONE_USDC);
+    });
+
+    it("accumulates totalYieldGenerated across multiple harvests", async function () {
+      await staking.connect(staker1).stake(1_000n * ONE_USDC);
+      await simulateYield(50n * ONE_USDC);
+      await staking.harvestAndDistribute();
+      await simulateYield(50n * ONE_USDC);
+      await staking.harvestAndDistribute();
+      expect(await staking.totalYieldGenerated()).to.equal(100n * ONE_USDC);
+    });
+
+    it("no-ops when no yield available", async function () {
       await staking.connect(staker1).stake(100n * ONE_USDC);
       await expect(staking.harvestAndDistribute()).to.not.be.reverted;
+      expect(await staking.lastHarvestTimestamp()).to.equal(0); // never harvested
+    });
+
+    it("no-ops when totalPrincipal is zero (M2 — prevents orphaned USDC)", async function () {
+      // Stake, simulate yield, then unstake everything
+      await staking.connect(staker1).stake(500n * ONE_USDC);
+      await simulateYield(50n * ONE_USDC);
+      await staking.connect(staker1).unstake(500n * ONE_USDC);
+      expect(await staking.totalPrincipal()).to.equal(0);
+
+      const platformBefore = await mockUSDC.balanceOf(platformWallet.address);
+      // harvestAndDistribute should return early — no platform fee paid, no USDC moved
+      await expect(staking.harvestAndDistribute()).to.not.be.reverted;
+      expect(await staking.lastHarvestTimestamp()).to.equal(0);
+      expect(await mockUSDC.balanceOf(platformWallet.address)).to.equal(platformBefore);
+    });
+
+    it("reverts when paused", async function () {
+      await staking.connect(staker1).stake(100n * ONE_USDC);
+      await simulateYield(10n * ONE_USDC);
+      await staking.pause();
+      await expect(staking.harvestAndDistribute())
+        .to.be.revertedWithCustomError(staking, "EnforcedPause");
     });
   });
 
@@ -162,25 +301,33 @@ describe("AbeokutaStaking", function () {
       await simulateYield(yieldAmt);
       await staking.harvestAndDistribute();
 
-      const distributable = yieldAmt - (yieldAmt * 200n) / TOTAL_BASIS; // 98 USDC
-      const expectedStaker  = (distributable * 1900n) / DISTRIBUTABLE;   // ≈19 USDC
-      const expectedCampaign = distributable - expectedStaker;            // ≈79 USDC
+      const distributable   = yieldAmt - (yieldAmt * 200n) / TOTAL_BASIS;
+      const expectedStaker  = (distributable * 1900n) / DISTRIBUTABLE;
+      const expectedCampaign = distributable - expectedStaker;
 
       const stakerBefore   = await mockUSDC.balanceOf(staker1.address);
-      const campaignBefore = await mockUSDC.balanceOf(await campaign.getAddress());
+      const campaignBefore = await mockUSDC.balanceOf(campaignAddress);
 
       await expect(staking.connect(staker1).claimYield())
         .to.emit(staking, "StakerYieldClaimed")
         .withArgs(staker1.address, expectedStaker, expectedCampaign);
 
       expect(await mockUSDC.balanceOf(staker1.address) - stakerBefore).to.equal(expectedStaker);
-      expect(await mockUSDC.balanceOf(await campaign.getAddress()) - campaignBefore)
-        .to.equal(expectedCampaign);
+      expect(await mockUSDC.balanceOf(campaignAddress) - campaignBefore).to.equal(expectedCampaign);
     });
 
     it("no-ops when no yield pending", async function () {
       await staking.connect(staker1).stake(100n * ONE_USDC);
       await expect(staking.connect(staker1).claimYield()).to.not.be.reverted;
+    });
+
+    it("reverts when paused", async function () {
+      await staking.connect(staker1).stake(100n * ONE_USDC);
+      await simulateYield(10n * ONE_USDC);
+      await staking.harvestAndDistribute();
+      await staking.pause();
+      await expect(staking.connect(staker1).claimYield())
+        .to.be.revertedWithCustomError(staking, "EnforcedPause");
     });
   });
 
@@ -217,8 +364,8 @@ describe("AbeokutaStaking", function () {
     });
 
     it("each staker has an independent split", async function () {
-      await staking.connect(staker1).setYieldSplit(9800, 0);   // full altruist
-      await staking.connect(staker2).setYieldSplit(0, 9800);   // full self-interest
+      await staking.connect(staker1).setYieldSplit(9800, 0);
+      await staking.connect(staker2).setYieldSplit(0, 9800);
 
       const [c1] = await staking.getStakerSplit(staker1.address);
       const [, s2] = await staking.getStakerSplit(staker2.address);
@@ -229,14 +376,11 @@ describe("AbeokutaStaking", function () {
     it("applies new split to subsequent harvest yield", async function () {
       const principal = 1_000n * ONE_USDC;
       await staking.connect(staker1).stake(principal);
-
-      // Set more generous split: 90% to campaign, 8% to self
       await staking.connect(staker1).setYieldSplit(9000, 800);
-
       await simulateYield(200n * ONE_USDC);
       await staking.harvestAndDistribute();
 
-      const distributable  = 200n * ONE_USDC - (200n * ONE_USDC * 200n) / TOTAL_BASIS;
+      const distributable   = 200n * ONE_USDC - (200n * ONE_USDC * 200n) / TOTAL_BASIS;
       const expectedStaker  = (distributable * 800n) / DISTRIBUTABLE;
       const expectedCampaign = distributable - expectedStaker;
 
@@ -249,26 +393,125 @@ describe("AbeokutaStaking", function () {
       const principal = 1_000n * ONE_USDC;
       await staking.connect(staker1).stake(principal);
 
-      // Yield with DEFAULT split (79/19)
       await simulateYield(100n * ONE_USDC);
       await staking.harvestAndDistribute();
 
-      // Pending raw before split change
-      const rawBefore = await staking.pendingRawYield(staker1.address);
-      expect(rawBefore).to.equal(0); // _settleRaw not yet called since last stake
-
-      // Change split — this calls _settleRaw internally, snapshotting the accrued raw
+      // Change split — this calls _settleRaw internally
       await staking.connect(staker1).setYieldSplit(9800, 0);
       const rawAfter = await staking.pendingRawYield(staker1.address);
-      expect(rawAfter).to.be.gt(0); // raw yield settled into pendingRawYield
+      expect(rawAfter).to.be.gt(0);
 
-      // Now claim — the ALREADY-SETTLED raw yield uses the NEW split (9800/0)
-      // (this is the documented behaviour: split applies at claim time)
+      // With split 9800/0, staker receives 0%
       const stakerBefore = await mockUSDC.balanceOf(staker1.address);
       await staking.connect(staker1).claimYield();
-      const stakerReceived = await mockUSDC.balanceOf(staker1.address) - stakerBefore;
-      // With split 0/9800, staker keeps 0 and gives all to cause
-      expect(stakerReceived).to.equal(0);
+      expect(await mockUSDC.balanceOf(staker1.address) - stakerBefore).to.equal(0);
+    });
+
+    it("allows stakers to change split even when contract is paused", async function () {
+      await staking.pause();
+      await expect(staking.connect(staker1).setYieldSplit(5000, 4800))
+        .to.emit(staking, "YieldSplitSet")
+        .withArgs(staker1.address, 5000, 4800);
+    });
+  });
+
+  // ─── claimYield campaign credit (try/catch) ──────────────────────────────
+
+  describe("claimYield campaign credit (try/catch)", function () {
+    it("emits YieldCreditFailed when campaign creditDonation reverts", async function () {
+      const principal = 1_000n * ONE_USDC;
+      await staking.connect(staker1).stake(principal);
+      const yieldAmt = 100n * ONE_USDC;
+      await simulateYield(yieldAmt);
+      await staking.harvestAndDistribute();
+
+      const distributable = yieldAmt - (yieldAmt * 200n) / TOTAL_BASIS;
+
+      // Pause the campaign so creditDonation reverts with EnforcedPause.
+      // With the pull pattern, no USDC is pre-transferred — so the cause portion
+      // stays in the staking contract. The catch block redirects it to the staker.
+      await campaign.pause();
+
+      const stakerBefore = await mockUSDC.balanceOf(staker1.address);
+      const campaignBefore = await mockUSDC.balanceOf(campaignAddress);
+
+      await expect(staking.connect(staker1).claimYield())
+        .to.emit(staking, "YieldCreditFailed");
+
+      // Staker receives 100% of distributable (stakerShare + redirected causeShare)
+      expect(await mockUSDC.balanceOf(staker1.address) - stakerBefore).to.equal(distributable);
+      // Campaign balance unchanged — no USDC leaked
+      expect(await mockUSDC.balanceOf(campaignAddress)).to.equal(campaignBefore);
+    });
+
+    it("successfully credits campaign when campaign is valid", async function () {
+      await staking.connect(staker1).stake(1_000n * ONE_USDC);
+      await simulateYield(100n * ONE_USDC);
+      await staking.harvestAndDistribute();
+
+      const campaignBefore = await mockUSDC.balanceOf(campaignAddress);
+      await staking.connect(staker1).claimYield();
+      expect(await mockUSDC.balanceOf(campaignAddress) - campaignBefore).to.be.gt(0);
+    });
+  });
+
+  // ─── pendingYield ─────────────────────────────────────────────────────────
+
+  describe("pendingYield", function () {
+    it("returns (0, 0) for address with no stake", async function () {
+      const [stakerPortion, causePortion] = await staking.pendingYield(other.address);
+      expect(stakerPortion).to.equal(0);
+      expect(causePortion).to.equal(0);
+    });
+
+    it("reflects unsettled yield proportionally", async function () {
+      await staking.connect(staker1).stake(1_000n * ONE_USDC);
+      const yieldAmt = 100n * ONE_USDC;
+      await simulateYield(yieldAmt);
+      await staking.harvestAndDistribute();
+
+      const distributable = yieldAmt - (yieldAmt * 200n) / TOTAL_BASIS;
+      const [stakerPortion, causePortion] = await staking.pendingYield(staker1.address);
+      expect(stakerPortion + causePortion).to.equal(distributable);
+    });
+
+    it("returns zero after yield has been claimed", async function () {
+      await staking.connect(staker1).stake(1_000n * ONE_USDC);
+      await simulateYield(100n * ONE_USDC);
+      await staking.harvestAndDistribute();
+      await staking.connect(staker1).claimYield();
+
+      const [stakerPortion, causePortion] = await staking.pendingYield(staker1.address);
+      expect(stakerPortion).to.equal(0);
+      expect(causePortion).to.equal(0);
+    });
+  });
+
+  // ─── getStakingStats ──────────────────────────────────────────────────────
+
+  describe("getStakingStats", function () {
+    it("returns correct principal", async function () {
+      await staking.connect(staker1).stake(500n * ONE_USDC);
+      const stats = await staking.getStakingStats();
+      expect(stats._totalPrincipal).to.equal(500n * ONE_USDC);
+    });
+
+    it("shows unrealized yield before harvest", async function () {
+      await staking.connect(staker1).stake(500n * ONE_USDC);
+      await simulateYield(50n * ONE_USDC);
+
+      const stats = await staking.getStakingStats();
+      expect(stats._unrealizedYield).to.equal(50n * ONE_USDC);
+      expect(stats._currentAaveBalance).to.equal(550n * ONE_USDC);
+    });
+
+    it("unrealizedYield is zero after harvest", async function () {
+      await staking.connect(staker1).stake(500n * ONE_USDC);
+      await simulateYield(50n * ONE_USDC);
+      await staking.harvestAndDistribute();
+
+      const stats = await staking.getStakingStats();
+      expect(stats._unrealizedYield).to.equal(0);
     });
   });
 
@@ -276,8 +519,6 @@ describe("AbeokutaStaking", function () {
 
   describe("Two stakers with different splits", function () {
     it("each staker claims their correct portion", async function () {
-      // staker1 is generous: 90% cause, 8% self
-      // staker2 uses default: 79% cause, 19% self
       await staking.connect(staker1).setYieldSplit(9000, 800);
 
       await staking.connect(staker1).stake(500n * ONE_USDC);
@@ -286,28 +527,45 @@ describe("AbeokutaStaking", function () {
       await simulateYield(200n * ONE_USDC);
       await staking.harvestAndDistribute();
 
-      // Each has 50% of totalPrincipal, so each gets 50% of distributable pool
-      const distributable  = 200n * ONE_USDC - (200n * ONE_USDC * 200n) / TOTAL_BASIS;
-      const half           = distributable / 2n;
+      const distributable = 200n * ONE_USDC - (200n * ONE_USDC * 200n) / TOTAL_BASIS;
+      const half = distributable / 2n;
 
       const s1Expected = (half * 800n)  / DISTRIBUTABLE;
       const s2Expected = (half * 1900n) / DISTRIBUTABLE;
 
       const [s1Portion] = await staking.pendingYield(staker1.address);
       const [s2Portion] = await staking.pendingYield(staker2.address);
-
       expect(s1Portion).to.equal(s1Expected);
       expect(s2Portion).to.equal(s2Expected);
     });
+
+    it("larger stake receives proportionally more yield", async function () {
+      await staking.connect(staker1).stake(750n * ONE_USDC);
+      await staking.connect(staker2).stake(250n * ONE_USDC);
+
+      await simulateYield(100n * ONE_USDC);
+      await staking.harvestAndDistribute();
+
+      const [s1Staker] = await staking.pendingYield(staker1.address);
+      const [s2Staker] = await staking.pendingYield(staker2.address);
+
+      // staker1 has 3x more principal than staker2
+      expect(s1Staker).to.equal(s2Staker * 3n);
+    });
   });
 
-  // ─── Stats ────────────────────────────────────────────────────────────────
+  // ─── Minimum stake enforcement ───────────────────────────────────────────
 
-  describe("getStakingStats", function () {
-    it("returns correct principal", async function () {
-      await staking.connect(staker1).stake(500n * ONE_USDC);
-      const stats = await staking.getStakingStats();
-      expect(stats._totalPrincipal).to.equal(500n * ONE_USDC);
+  describe("Minimum stake (1 USDC)", function () {
+    it("reverts when staking less than 1 USDC", async function () {
+      await expect(staking.connect(staker1).stake(ONE_USDC - 1n))
+        .to.be.revertedWith("Minimum stake is 1 USDC");
+    });
+
+    it("accepts exactly 1 USDC", async function () {
+      await expect(staking.connect(staker1).stake(ONE_USDC))
+        .to.emit(staking, "Staked")
+        .withArgs(staker1.address, ONE_USDC);
     });
   });
 
@@ -323,6 +581,89 @@ describe("AbeokutaStaking", function () {
 
     it("non-owner cannot pause", async function () {
       await expect(staking.connect(other).pause()).to.be.reverted;
+    });
+
+    it("owner can update campaign contract and emits CampaignContractUpdated (SC-M1)", async function () {
+      await expect(staking.setCampaignContract(other.address))
+        .to.emit(staking, "CampaignContractUpdated")
+        .withArgs(other.address);
+      expect(await staking.campaignContract()).to.equal(other.address);
+    });
+
+    it("setCampaignContract reverts with zero address", async function () {
+      await expect(staking.setCampaignContract(ethers.ZeroAddress))
+        .to.be.revertedWith("Invalid");
+    });
+
+    it("owner can update platform wallet and emits PlatformWalletUpdated (SC-M1)", async function () {
+      await expect(staking.setPlatformWallet(other.address))
+        .to.emit(staking, "PlatformWalletUpdated")
+        .withArgs(other.address);
+      expect(await staking.platformWallet()).to.equal(other.address);
+    });
+
+    it("setPlatformWallet reverts with zero address", async function () {
+      await expect(staking.setPlatformWallet(ethers.ZeroAddress))
+        .to.be.revertedWith("Invalid");
+    });
+
+    it("owner can revoke and restore Aave approval", async function () {
+      await expect(staking.revokeAaveApproval()).to.not.be.reverted;
+      await expect(staking.restoreAaveApproval()).to.not.be.reverted;
+    });
+
+    it("setCampaignContract revokes old approval and grants new one", async function () {
+      const stakingAddress = await staking.getAddress();
+      // Old campaign has max approval from staking
+      expect(await mockUSDC.allowance(stakingAddress, campaignAddress)).to.equal(ethers.MaxUint256);
+
+      await staking.setCampaignContract(other.address);
+
+      // Old campaign approval revoked
+      expect(await mockUSDC.allowance(stakingAddress, campaignAddress)).to.equal(0);
+      // New campaign approved
+      expect(await mockUSDC.allowance(stakingAddress, other.address)).to.equal(ethers.MaxUint256);
+    });
+
+    it("non-owner cannot call admin functions", async function () {
+      await expect(staking.connect(other).setCampaignContract(other.address)).to.be.reverted;
+      await expect(staking.connect(other).setPlatformWallet(other.address)).to.be.reverted;
+      await expect(staking.connect(other).revokeAaveApproval()).to.be.reverted;
+    });
+  });
+
+  // ─── emergencyWithdraw (M3) ──────────────────────────────────────────────
+
+  describe("emergencyWithdraw", function () {
+    it("owner can rescue stuck aUSDC tokens (M3)", async function () {
+      const stakingAddress = await staking.getAddress();
+      await staking.connect(staker1).stake(500n * ONE_USDC);
+      await simulateYield(50n * ONE_USDC);
+      // aUSDC is in staking; owner rescues it
+      const aTokenAddr = aTokenAddress;
+      const balBefore = await (await ethers.getContractAt("MockUSDC", aTokenAddr)).balanceOf(stakingAddress);
+      expect(balBefore).to.be.gt(0);
+
+      await staking.emergencyWithdraw(aTokenAddr, owner.address);
+      expect(await (await ethers.getContractAt("MockUSDC", aTokenAddr)).balanceOf(stakingAddress)).to.equal(0);
+    });
+
+    it("reverts with zero recipient (L4)", async function () {
+      await staking.connect(staker1).stake(100n * ONE_USDC);
+      await expect(staking.emergencyWithdraw(aTokenAddress, ethers.ZeroAddress))
+        .to.be.revertedWith("Invalid recipient");
+    });
+
+    it("reverts when nothing to rescue", async function () {
+      const MockToken = await ethers.getContractFactory("MockUSDC");
+      const emptyToken = await MockToken.deploy();
+      await expect(staking.emergencyWithdraw(await emptyToken.getAddress(), owner.address))
+        .to.be.revertedWith("Nothing to rescue");
+    });
+
+    it("non-owner cannot call emergencyWithdraw", async function () {
+      await staking.connect(staker1).stake(100n * ONE_USDC);
+      await expect(staking.connect(other).emergencyWithdraw(aTokenAddress, other.address)).to.be.reverted;
     });
   });
 });

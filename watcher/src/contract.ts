@@ -2,8 +2,12 @@
  * Viem client + helpers for calling donateUSDC() on Base.
  *
  * Float wallet pattern:
- *   1. At startup, approve campaign contract for max USDC (one-time).
+ *   1. Before each donation, verify on-chain USDC allowance and (re)approve if needed.
  *   2. Per deposit, call donateUSDC(usdcAmount) — campaign pulls from float wallet.
+ *
+ * W-C1: Transaction queue errors are now logged (not silently swallowed).
+ * W-H4: Approval is verified against the live on-chain allowance before every
+ *        donation, eliminating the stale-flag problem.
  */
 
 import {
@@ -17,6 +21,23 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { base, baseSepolia } from "viem/chains";
 import { config } from "./config";
+import { logger } from "./logger";
+
+// Sequential transaction queue to prevent nonce collisions
+let _txQueue: Promise<void> = Promise.resolve();
+
+function enqueueTx<T>(fn: () => Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    // W-C1: Log unexpected queue-level errors instead of silently swallowing them.
+    // Note: fn() rejections are correctly propagated via reject() — the catch
+    // here only fires for unexpected errors in the queue machinery itself.
+    _txQueue = _txQueue
+      .then(() => fn().then(resolve, reject))
+      .catch((err) => {
+        logger.error("[contract] Unexpected queue error", { error: String(err) });
+      });
+  });
+}
 
 // ── ABIs (minimal) ────────────────────────────────────────────────────────────
 
@@ -45,13 +66,14 @@ const account = privateKeyToAccount(
 const publicClient = createPublicClient({ chain, transport });
 const walletClient = createWalletClient({ account, chain, transport });
 
-// ── One-time max approval ─────────────────────────────────────────────────────
+// ── On-chain allowance check + approval ───────────────────────────────────────
 
-let _approved = false;
-
+/**
+ * W-H4: Always checks the live on-chain allowance.
+ * Re-approves if the allowance has dropped below half of maxUint256.
+ * This handles cases where the allowance was revoked after a previous approval.
+ */
 async function ensureApproval(): Promise<void> {
-  if (_approved) return;
-
   const allowance = await publicClient.readContract({
     address: config.usdcAddress,
     abi: ERC20_ABI,
@@ -59,21 +81,22 @@ async function ensureApproval(): Promise<void> {
     args: [account.address, config.campaignAddress],
   });
 
-  if (allowance >= maxUint256 / 2n) {
-    _approved = true;
-    return;
-  }
+  if (allowance >= maxUint256 / 2n) return;
 
-  console.log("[contract] Approving campaign contract for max USDC...");
+  logger.info("[contract] On-chain USDC allowance insufficient — re-approving campaign contract...", {
+    allowance: formatUnits(allowance, 6),
+  });
   const hash = await walletClient.writeContract({
     address: config.usdcAddress,
     abi: ERC20_ABI,
     functionName: "approve",
     args: [config.campaignAddress, maxUint256],
   });
-  await publicClient.waitForTransactionReceipt({ hash });
-  console.log("[contract] Approval confirmed:", hash);
-  _approved = true;
+  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") {
+    throw new Error("USDC approval transaction reverted on-chain");
+  }
+  logger.info("[contract] Approval confirmed", { hash });
 }
 
 // ── Float wallet balance check ─────────────────────────────────────────────────
@@ -101,34 +124,39 @@ export async function donateToCampaign(
   source: "btc" | "sol",
   txRef: string
 ): Promise<string> {
-  // Convert USD to USDC 6-decimal units
-  const usdcAmount = BigInt(Math.floor(usdValueFloat * 1_000_000));
+  return enqueueTx(async () => {
+    // Convert USD to USDC 6-decimal units
+    const usdcAmount = BigInt(Math.floor(usdValueFloat * 1_000_000));
 
-  if (usdcAmount === 0n) throw new Error("Donation amount rounds to zero USDC");
+    if (usdcAmount === 0n) throw new Error("Donation amount rounds to zero USDC");
 
-  // Check float wallet has enough
-  const balance = await getFloatBalance();
-  if (balance < usdcAmount) {
-    throw new Error(
-      `Float wallet has only ${formatUnits(balance, 6)} USDC; need ${formatUnits(usdcAmount, 6)} USDC`
+    // Check float wallet has enough
+    const balance = await getFloatBalance();
+    if (balance < usdcAmount) {
+      throw new Error(
+        `Float wallet has only ${formatUnits(balance, 6)} USDC; need ${formatUnits(usdcAmount, 6)} USDC`
+      );
+    }
+
+    // W-H4: Verify live on-chain allowance before every donation
+    await ensureApproval();
+
+    logger.info(
+      `[contract] Donating ${formatUnits(usdcAmount, 6)} USDC on behalf of ${source} tx ${txRef}`
     );
-  }
 
-  await ensureApproval();
+    const hash = await walletClient.writeContract({
+      address: config.campaignAddress,
+      abi: CAMPAIGN_ABI,
+      functionName: "donateUSDC",
+      args: [usdcAmount],
+    });
 
-  console.log(
-    `[contract] Donating $${(usdcAmount / 1_000_000n).toString()} USDC ` +
-      `(${formatUnits(usdcAmount, 6)} USDC) on behalf of ${source} tx ${txRef}`
-  );
-
-  const hash = await walletClient.writeContract({
-    address: config.campaignAddress,
-    abi: CAMPAIGN_ABI,
-    functionName: "donateUSDC",
-    args: [usdcAmount],
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") {
+      throw new Error(`Donation transaction reverted on-chain: ${hash}`);
+    }
+    logger.info(`[contract] Donation confirmed`, { hash, source, txRef });
+    return hash;
   });
-
-  await publicClient.waitForTransactionReceipt({ hash });
-  console.log(`[contract] Donation confirmed: ${hash}`);
-  return hash;
 }

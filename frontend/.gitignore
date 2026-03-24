@@ -4,3 +4,4 @@
 /.env
 /coverage
 /.next
+/.env.local

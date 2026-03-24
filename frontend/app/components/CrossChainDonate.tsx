@@ -121,7 +121,9 @@ export function CrossChainDonate({ onSuccess }: Props) {
   // ─── Main form ──────────────────────────────────────────────────────────────
 
   const showSteps = xc.step === "approving" || xc.step === "sending" || xc.step === "confirming";
-  const approvalDone = xc.step === "sending" || xc.step === "confirming" || xc.step === "success";
+  // "success" causes an early return above, so TypeScript narrows it out here.
+  // approvalDone is true once we've moved past "approving" to any later step.
+  const approvalDone = xc.step === "sending" || xc.step === "confirming";
 
   return (
     <div className="space-y-5">
@@ -235,8 +237,9 @@ export function CrossChainDonate({ onSuccess }: Props) {
             active={xc.step === "approving"}
             label={xc.step === "approving" ? "Approving USDC spend…" : "USDC approved"}
           />
+          {/* done=false: "success" step triggers the early return above, so this row is never in "done" state */}
           <StepRow
-            done={xc.step === "success"}
+            done={false}
             active={xc.step === "sending" || xc.step === "confirming"}
             label={
               xc.step === "sending"    ? "Submitting bridge transaction…" :
@@ -275,6 +278,7 @@ export function CrossChainDonate({ onSuccess }: Props) {
           !amount ||
           parsedAmount === 0n ||
           xc.isProcessing ||
+          xc.step === "quoting" ||   // FE-H4: block while fee is being estimated
           !xc.bridgeConfigured ||
           xc.lzFee === 0n
         }

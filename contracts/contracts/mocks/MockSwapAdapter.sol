@@ -15,18 +15,18 @@ contract MockSwapAdapter is ISwapAdapter {
         usdc = IERC20(_usdc);
     }
 
-    function swapToUSDT(address tokenIn, uint256 amountIn)
+    function swapToUSDC(address tokenIn, uint256 amountIn)
         external
         override
         returns (uint256)
     {
         IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-        // 1:1 mock — mint USDC or use pre-funded balance
+        // 1:1 mock — use pre-funded balance
         usdc.safeTransfer(msg.sender, amountIn);
         return amountIn;
     }
 
-    function swapNativeToUSDT() external payable override returns (uint256) {
+    function swapNativeToUSDC() external payable override returns (uint256) {
         // 1:1 mock: 1 wei ETH = 1 USDC unit (test only)
         usdc.safeTransfer(msg.sender, msg.value);
         return msg.value;

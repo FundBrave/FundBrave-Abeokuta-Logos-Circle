@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test:*)",
+      "Bash(node:*)",
+      "Bash(npx hardhat:*)",
+      "Bash(CAMPAIGN_ADDRESS=0xA0d0cb5b995683d246A22b7b46863c8Fd415AeAa STAKING_ADDRESS=0x8ae8049dCbdf9Ef25389d738b5E95404d9D67fD1 npx hardhat run deploy/02_complete_deployment.js --network baseSepolia 2>&1)",
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(npm install:*)",
+      "Bash(timeout 20 node -e \":*)",
+      "Bash(node -e \":*)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill /PID 40652 /F)",
+      "Bash(cmd /c \"taskkill /PID 40652 /F\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(cmd /c \"netstat -ano | findstr :3001\" 2>&1)",
+      "Bash(cmd /c \"netstat -ano | findstr LISTEN | findstr :300\" 2>&1)",
+      "Bash(rm:*)"
+    ]
+  }
+}
