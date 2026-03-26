@@ -49,21 +49,25 @@ export function ImpactModels() {
 
       // Stagger inner elements of each impact card
       sectionRef.current.querySelectorAll(".impact-card").forEach((card) => {
-        gsap.from(card.querySelectorAll(".card-anim"), {
-          y: 25,
-          opacity: 0,
-          duration: 0.5,
-          stagger: 0.1,
-          ease: "power2.out",
-          scrollTrigger: {
-            trigger: card,
-            start: "top 85%",
-            toggleActions: "play none none none",
-          },
-        });
+        gsap.fromTo(
+          card.querySelectorAll(".card-anim"),
+          { y: 25, opacity: 0 },
+          {
+            y: 0,
+            opacity: 1,
+            duration: 0.5,
+            stagger: 0.1,
+            ease: "power2.out",
+            scrollTrigger: {
+              trigger: card,
+              start: "top 85%",
+              toggleActions: "play none none none",
+            },
+          }
+        );
       });
     },
-    { dependencies: [] }
+    { dependencies: [], scope: sectionRef }
   );
 
   return (

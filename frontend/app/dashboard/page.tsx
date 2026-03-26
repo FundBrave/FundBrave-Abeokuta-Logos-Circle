@@ -4,6 +4,7 @@ import { SubPageNav } from "../components/sections/SubPageNav";
 import { TransparencyHeroProgress } from "../components/sections/TransparencyHeroProgress";
 import { TransparencyStatsGrid } from "../components/sections/TransparencyStatsGrid";
 import { TransparencyMultisig } from "../components/sections/TransparencyMultisig";
+import { TransparencyFundFlow } from "../components/sections/TransparencyFundFlow";
 import { TransparencyContracts } from "../components/sections/TransparencyContracts";
 import { TransparencyActivityFeed } from "../components/sections/TransparencyActivityFeed";
 import { TransparencyCTA } from "../components/sections/TransparencyCTA";
@@ -27,6 +28,8 @@ export default function DashboardPage() {
           <TransparencyStatsGrid className="lg:col-span-2" />
           <TransparencyMultisig />
         </section>
+
+        <TransparencyFundFlow />
 
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           <TransparencyContracts />

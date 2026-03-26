@@ -33,18 +33,22 @@ export function useScrollReveal<T extends HTMLElement = HTMLDivElement>(
     () => {
       if (!ref.current) return;
 
-      gsap.from(ref.current, {
-        y,
-        opacity: 0,
-        duration,
-        delay,
-        ease: "power2.out",
-        scrollTrigger: {
-          trigger: ref.current,
-          start,
-          toggleActions: "play none none none",
-        },
-      });
+      gsap.fromTo(
+        ref.current,
+        { y, opacity: 0 },
+        {
+          y: 0,
+          opacity: 1,
+          duration,
+          delay,
+          ease: "power2.out",
+          scrollTrigger: {
+            trigger: ref.current,
+            start,
+            toggleActions: "play none none none",
+          },
+        }
+      );
     },
     { dependencies: [] }
   );

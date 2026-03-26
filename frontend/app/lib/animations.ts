@@ -35,20 +35,20 @@ export function animateSectionEntrance(
   });
 
   if (elements.header) {
-    tl.from(container.querySelectorAll(elements.header), {
-      y: 20,
-      opacity: 0,
-      duration: 0.5,
-      ease: "power2.out",
-    });
+    tl.fromTo(
+      container.querySelectorAll(elements.header),
+      { y: 20, opacity: 0 },
+      { y: 0, opacity: 1, duration: 0.5, ease: "power2.out" }
+    );
   }
 
   if (elements.children) {
-    tl.from(
+    tl.fromTo(
       container.querySelectorAll(elements.children),
+      { y: 40, opacity: 0 },
       {
-        y: 40,
-        opacity: 0,
+        y: 0,
+        opacity: 1,
         duration: 0.6,
         stagger: elements.stagger ?? 0.15,
         ease: "power2.out",

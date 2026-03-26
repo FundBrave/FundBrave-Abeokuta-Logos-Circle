@@ -5,6 +5,7 @@ import {
   shortenAddress,
   getAddressExplorerUrl,
 } from "../../lib/contracts";
+import { useScrollReveal } from "../../hooks/useScrollReveal";
 
 const CONTRACTS = [
   { label: "Campaign Contract", address: CONTRACT_ADDRESSES.campaign },
@@ -14,8 +15,10 @@ const CONTRACTS = [
 ];
 
 export function TransparencyContracts() {
+  const ref = useScrollReveal<HTMLDivElement>({ y: 30, duration: 0.6 });
+
   return (
-    <div className="glass-card rounded-2xl border border-outline-variant/10 overflow-hidden">
+    <div ref={ref} className="glass-card rounded-2xl border border-outline-variant/10 overflow-hidden">
       <div className="p-6 border-b border-outline-variant/5 bg-white/5">
         <h3 className="font-headline text-xl font-bold flex items-center gap-2">
           <span className="material-symbols-outlined text-secondary text-2xl">

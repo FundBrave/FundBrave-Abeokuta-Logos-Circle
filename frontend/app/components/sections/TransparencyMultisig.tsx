@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useScrollReveal } from "../../hooks/useScrollReveal";
 import {
   CONTRACT_ADDRESSES,
   MULTISIG_SIGNERS,
@@ -11,6 +12,7 @@ import {
 } from "../../lib/contracts";
 
 export function TransparencyMultisig() {
+  const ref = useScrollReveal<HTMLDivElement>({ y: 30, duration: 0.6 });
   const [copied, setCopied] = useState(false);
 
   const treasuryAddr = CONTRACT_ADDRESSES.treasury;
@@ -25,7 +27,7 @@ export function TransparencyMultisig() {
   };
 
   return (
-    <div className="glass-card p-8 rounded-2xl border border-outline-variant/10 flex flex-col justify-between">
+    <div ref={ref} className="glass-card p-8 rounded-2xl border border-outline-variant/10 flex flex-col justify-between">
       <div>
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">

@@ -1,5 +1,9 @@
 "use client";
 
+import { useRef } from "react";
+import { useGSAP } from "@gsap/react";
+import { gsap } from "../../lib/gsap-config";
+import { animateCounter } from "../../lib/animations";
 import { useCampaignStats } from "../../hooks/useCampaignStats";
 import { CAMPAIGN_GOAL_MIN_USDC } from "../../lib/contracts";
 
@@ -21,8 +25,54 @@ export function TransparencyHeroProgress() {
       )
     : 0;
 
+  const sectionRef = useRef<HTMLElement>(null);
+  const progressBarRef = useRef<HTMLDivElement>(null);
+  const raisedRef = useRef<HTMLSpanElement>(null);
+  const percentRef = useRef<HTMLSpanElement>(null);
+  const totalRaisedNum = Number(stats.totalRaised) / 1e6;
+  const progressPercent = stats.progressPercent;
+
+  useGSAP(
+    () => {
+      if (!sectionRef.current) return;
+
+      // Progress bar fill
+      if (progressBarRef.current && progressPercent > 0) {
+        gsap.fromTo(
+          progressBarRef.current,
+          { width: "0%" },
+          {
+            width: `${Math.min(progressPercent, 100)}%`,
+            duration: 1.5,
+            ease: "power2.out",
+            delay: 0.3,
+          }
+        );
+      }
+
+      // Counters — no guard, fires on every run where data > 0
+      if (raisedRef.current && totalRaisedNum > 0) {
+        animateCounter(raisedRef.current, totalRaisedNum, {
+          prefix: "$",
+          decimals: 2,
+          duration: 1.5,
+        });
+      }
+      if (percentRef.current && progressPercent > 0) {
+        animateCounter(percentRef.current, Math.round(progressPercent), {
+          suffix: "%",
+          duration: 1.2,
+        });
+      }
+    },
+    {
+      dependencies: [totalRaisedNum, progressPercent],
+      scope: sectionRef,
+    }
+  );
+
   return (
-    <section className="relative">
+    <section ref={sectionRef} className="relative">
       <div className="absolute -top-20 -left-20 w-96 h-96 bg-primary-container/10 blur-[100px] rounded-full pointer-events-none" />
 
       <div className="glass-card rounded-3xl p-8 md:p-12 border border-outline-variant/10 glow-accent overflow-hidden relative">
@@ -54,7 +104,7 @@ export function TransparencyHeroProgress() {
         <div className="space-y-6">
           <div className="flex justify-between items-end">
             <div className="space-y-1">
-              <span className="text-5xl font-headline font-black gradient-text">
+              <span ref={raisedRef} className="text-5xl font-headline font-black gradient-text">
                 ${stats.totalRaisedFormatted}
               </span>
               <span className="text-on-surface-variant block font-medium">
@@ -62,8 +112,8 @@ export function TransparencyHeroProgress() {
               </span>
             </div>
             <div className="text-right hidden sm:block">
-              <span className="text-2xl font-headline font-bold text-secondary">
-                {stats.progressPercent.toFixed(0)}%
+              <span ref={percentRef} className="text-2xl font-headline font-bold text-secondary">
+                {progressPercent.toFixed(0)}%
               </span>
               <span className="block text-xs text-on-surface-variant uppercase tracking-widest">
                 Funded
@@ -74,8 +124,9 @@ export function TransparencyHeroProgress() {
           {/* Progress Bar */}
           <div className="relative h-4 w-full bg-surface-container-high rounded-full overflow-hidden">
             <div
-              className="progress-gradient-bg h-full rounded-full transition-all duration-1000"
-              style={{ width: `${Math.min(stats.progressPercent, 100)}%` }}
+              ref={progressBarRef}
+              className="progress-gradient-bg h-full rounded-full"
+              style={{ width: "0%" }}
             />
             <div
               className="absolute top-0 h-full w-0.5 bg-white/30"

@@ -222,3 +222,15 @@
 .hover-lift:hover {
   animation: hover-lift 0.3s ease-out forwards;
 }
+
+/* Fund flow pulse dot */
+@keyframes flow-pulse {
+  0% { left: 0%; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+
+.flow-dot {
+  animation: flow-pulse 2.5s ease-in-out infinite;
+}

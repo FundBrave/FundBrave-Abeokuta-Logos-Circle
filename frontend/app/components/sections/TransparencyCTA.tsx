@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useScrollReveal } from "../../hooks/useScrollReveal";
 
 export function TransparencyCTA() {
+  const ref = useScrollReveal<HTMLElement>({ y: 25, duration: 0.5 });
+
   return (
-    <section className="py-12 flex flex-col items-center text-center space-y-8">
+    <section ref={ref} className="py-12 flex flex-col items-center text-center space-y-8">
       <div className="space-y-2">
         <h3 className="font-headline text-3xl font-bold">
           Ready to contribute?

@@ -37,15 +37,10 @@ export function ProgressCard() {
   const stakedTVLRef = useRef<HTMLParagraphElement>(null);
   const yieldRef = useRef<HTMLParagraphElement>(null);
   const goalProgressRef = useRef<HTMLParagraphElement>(null);
-  const hasAnimatedRef = useRef(false);
-
   // Raw numeric values for counters
   const totalRaisedNum = Number(stats.totalRaised) / 1e6;
   const totalStakedNum = Number(stats.totalStaked) / 1e6;
   const yieldNum = Number(stats.totalYieldGenerated) / 1e6;
-  const hasData =
-    totalRaisedNum > 0 || donorCount > 0 || totalStakedNum > 0 || progressPercent > 0;
-
   useGSAP(
     () => {
       if (!sectionRef.current) return;
@@ -56,9 +51,10 @@ export function ProgressCard() {
       });
 
       // Right-side cards stagger
-      tl.from(
+      tl.fromTo(
         sectionRef.current.querySelectorAll(".progress-right-card"),
-        { x: 30, opacity: 0, duration: 0.6, stagger: 0.15, ease: "power2.out" },
+        { x: 30, opacity: 0 },
+        { x: 0, opacity: 1, duration: 0.6, stagger: 0.15, ease: "power2.out" },
         0.5
       );
 
@@ -76,24 +72,20 @@ export function ProgressCard() {
         );
       }
 
-      // Counter animations — only on first non-zero data arrival
-      if (hasData && !hasAnimatedRef.current) {
-        hasAnimatedRef.current = true;
+      // Counter animations — no guard, fires on every run where data > 0
+      const counters = [
+        { ref: totalRaisedRef, val: totalRaisedNum, opts: { prefix: "$", decimals: 2, duration: 1.5 } },
+        { ref: donorCountRef, val: donorCount, opts: { duration: 1.0 } },
+        { ref: stakedTVLRef, val: totalStakedNum, opts: { prefix: "$", decimals: 2 } },
+        { ref: yieldRef, val: yieldNum, opts: { prefix: "$", decimals: 2 } },
+        { ref: goalProgressRef, val: progressPercent, opts: { suffix: "%" } },
+      ];
 
-        const counters = [
-          { ref: totalRaisedRef, val: totalRaisedNum, opts: { prefix: "$", decimals: 2, duration: 1.5 } },
-          { ref: donorCountRef, val: donorCount, opts: { duration: 1.0 } },
-          { ref: stakedTVLRef, val: totalStakedNum, opts: { prefix: "$", decimals: 2 } },
-          { ref: yieldRef, val: yieldNum, opts: { prefix: "$", decimals: 2 } },
-          { ref: goalProgressRef, val: progressPercent, opts: { suffix: "%" } },
-        ];
-
-        counters.forEach(({ ref, val, opts }) => {
-          if (ref.current && val > 0) {
-            tl.add(animateCounter(ref.current, val, opts), 0.4);
-          }
-        });
-      }
+      counters.forEach(({ ref, val, opts }) => {
+        if (ref.current && val > 0) {
+          tl.add(animateCounter(ref.current, val, opts), 0.4);
+        }
+      });
     },
     {
       dependencies: [
@@ -103,6 +95,7 @@ export function ProgressCard() {
         yieldNum,
         progressPercent,
       ],
+      scope: sectionRef,
     }
   );
 
@@ -145,7 +138,7 @@ export function ProgressCard() {
               <div
                 ref={progressBarRef}
                 className="absolute top-0 left-0 h-full progress-gradient-bg rounded-full shadow-[0_0_20px_rgba(124,58,237,0.3)]"
-                style={{ width: hasAnimatedRef.current ? `${Math.min(progressPercent, 100)}%` : "0%" }}
+                style={{ width: "0%" }}
               />
             </div>
 
