@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { Providers } from "./providers";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import "material-symbols/outlined.css";
 import "./globals.css";
+
 
 // FE-L1: metadataBase is required for absolute OG image URLs
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3002";
@@ -26,8 +28,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-[#0A0E1A] text-white antialiased">
+    <html lang="en" className="dark">
+      <head>
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600&display=swap"
+        />
+      </head>
+      <body className="min-h-screen bg-[#0A0E1A] text-[#dfe2f3] antialiased font-body">
         <ErrorBoundary>
           <Providers>{children}</Providers>
         </ErrorBoundary>

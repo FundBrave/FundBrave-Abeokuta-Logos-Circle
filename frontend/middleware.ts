@@ -25,9 +25,9 @@ export function middleware(request: NextRequest) {
     // FE-C1: unsafe-eval is only included in dev mode for Next.js React Refresh (hot reload).
     // In production, eval is not needed — wagmi v2/viem use static ABI encoding.
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
-    "style-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: https:",
-    "font-src 'self' data:",
+    "font-src 'self' data: https://fonts.gstatic.com",
     [
       "connect-src 'self'",
       "https://*.alchemy.com",

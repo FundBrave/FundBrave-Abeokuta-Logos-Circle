@@ -258,6 +258,17 @@ export function isBaseChain(chainId: number): boolean {
   return chainId === 8453 || chainId === 84532;
 }
 
+// ─── Multisig Treasury Config ─────────────────────────────────────────────────
+
+export const MULTISIG_SIGNERS = [
+  { name: "Abeokuta Lead",  address: process.env.NEXT_PUBLIC_SIGNER_1 || "0x0000…" },
+  { name: "Logos Network",  address: process.env.NEXT_PUBLIC_SIGNER_2 || "0x0000…" },
+  { name: "Community Rep",  address: process.env.NEXT_PUBLIC_SIGNER_3 || "0x0000…" },
+];
+
+export const REQUIRED_SIGS = parseInt(process.env.NEXT_PUBLIC_REQUIRED_SIGS || "2");
+export const TOTAL_SIGS    = MULTISIG_SIGNERS.length;
+
 // ─── ABIs (minimal — only functions the frontend calls) ───────────────────────
 
 export const CAMPAIGN_ABI = [
