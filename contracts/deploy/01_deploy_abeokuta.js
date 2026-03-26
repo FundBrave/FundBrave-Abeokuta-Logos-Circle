@@ -33,7 +33,7 @@ const CONFIG = {
     usdc:         "0xf269f54304f8DB2dB613341CC7E189B02BEf98dE", // FundBrave mock USDC on testnet
     aavePool:     "0xA14694B3a1788D22c660C837842B2d22E24983B4",
     aUsdc:        "0xCdF55352fa73B548d81E57f2Ebb691462bD4a95F",
-    swapAdapter:  "0x3b0D92907191f3a44FE2126e9F5A3D80603aAA16", // Existing FundBrave SwapAdapter
+    swapAdapter:  "0x5708A691d0242899Ae12dD8F47876319730F5987", // MockSwapAdapter (testnet — no real DEX liquidity on Base Sepolia)
     // FundBraveBridge on Base Sepolia (receives LZ messages from source chains)
     // Set BRIDGE_ADDRESS env var after deploying/configuring FundBraveBridge on Base Sepolia
     bridgeAddress: process.env.BRIDGE_ADDRESS || ethers.ZeroAddress,
@@ -48,7 +48,10 @@ const CONFIG = {
     usdc:         "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // Native USDC on Base
     aavePool:     "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
     aUsdc:        "0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB",
-    swapAdapter:  process.env.MAINNET_SWAP_ADAPTER || ethers.ZeroAddress,
+    // UniswapAdapterUSDC is deployed by this script unless MAINNET_SWAP_ADAPTER is already set.
+    swapAdapter:  process.env.MAINNET_SWAP_ADAPTER || null,
+    uniswapRouter: "0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24", // Uniswap V2 Router on Base
+    weth:          "0x4200000000000000000000000000000000000006", // WETH on Base
     bridgeAddress: process.env.BRIDGE_ADDRESS || ethers.ZeroAddress,
     goalMinUSDC:  1_000,
     goalMaxUSDC:  2_500,
@@ -107,14 +110,7 @@ async function main() {
     throw new Error("Missing USDC/Aave addresses. Set them in .env or CONFIG.");
   }
 
-  // SC-M5: Require swap adapter on mainnet — a zero address silently disables ERC20/ETH donations
   const isMainnet = Number(chainId) === 8453;
-  if (isMainnet && (!swapAdapter || swapAdapter === ethers.ZeroAddress)) {
-    throw new Error(
-      "MAINNET_SWAP_ADAPTER env var is required for mainnet deployment. " +
-      "Set it to the deployed UniswapAdapter or OneInchAdapter address."
-    );
-  }
 
   // SC-M6: Warn loudly if bridge address is zero — cross-chain donations will be disabled
   const bridgeAddress = cfg.bridgeAddress;
@@ -131,6 +127,25 @@ async function main() {
     );
   }
 
+  // ── Deploy or reuse UniswapAdapterUSDC (mainnet only) ─────────────────────
+  let finalSwapAdapter = swapAdapter;
+  if (isMainnet && !finalSwapAdapter) {
+    console.log("1a. Deploying UniswapAdapterUSDC...");
+    const AdapterFactory = await ethers.getContractFactory("UniswapAdapterUSDC");
+    const adapter = await AdapterFactory.deploy(
+      cfg.uniswapRouter,
+      usdcAddress,
+      cfg.weth,
+      deployer.address   // owner — transfer to treasury/multisig post-deploy
+    );
+    await adapter.waitForDeployment();
+    finalSwapAdapter = await adapter.getAddress();
+    console.log(`    UniswapAdapterUSDC deployed: ${finalSwapAdapter}`);
+    console.log(`    ⚠  Transfer ownership to treasury/multisig: adapter.transferOwnership(${treasury})`);
+  } else if (!finalSwapAdapter) {
+    finalSwapAdapter = ethers.ZeroAddress;
+  }
+
   // ── Campaign parameters ───────────────────────────────────────────────────
   const USDC_DECIMALS  = 6;
   const goalMin        = BigInt(cfg.goalMinUSDC) * BigInt(10 ** USDC_DECIMALS);
@@ -145,7 +160,7 @@ async function main() {
   const CampaignFactory = await ethers.getContractFactory("AbeokutaCampaign");
   const campaign = await CampaignFactory.deploy(
     usdcAddress,
-    swapAdapter || ethers.ZeroAddress,
+    finalSwapAdapter,
     treasury,
     goalMin,
     goalMax,
@@ -195,6 +210,21 @@ async function main() {
   await tx2.wait();
   console.log(`   Campaign.setBridgeContract(${receiverAddress}) ✓`);
 
+  // I-7: Set the watcher address so donateUSDCFor can credit BTC/SOL donations.
+  // Without this, all watcher calls revert (watcher defaults to address(0)).
+  const watcherAddress = process.env.WATCHER_ADDRESS;
+  if (watcherAddress) {
+    const tx3 = await campaign.setWatcher(watcherAddress);
+    await tx3.wait();
+    console.log(`   Campaign.setWatcher(${watcherAddress}) ✓`);
+  } else {
+    console.warn(
+      "\n⚠  WATCHER_ADDRESS not set — BTC/SOL donations will be disabled until\n" +
+      "   campaign.setWatcher(<watcher-hot-wallet>) is called.\n" +
+      "   Set WATCHER_ADDRESS in your .env before deploying, or call it manually post-deploy.\n"
+    );
+  }
+
   // ── 5. Save deployment output ─────────────────────────────────────────────
   const output = {
     network:               cfg.name,
@@ -207,7 +237,7 @@ async function main() {
     USDC:                  usdcAddress,
     AavePool:              aaveAddress,
     aUSDC:                 aUsdcAddress,
-    SwapAdapter:           swapAdapter || ethers.ZeroAddress,
+    SwapAdapter:           finalSwapAdapter,
     Treasury:              treasury,
     PlatformWallet:        platformWallet,
     Deployer:              deployer.address,
@@ -233,7 +263,7 @@ async function main() {
 
   console.log(`Next steps:`);
   console.log(`  1. Verify contracts on explorer:`);
-  console.log(`     npx hardhat verify --network ${network.name} ${campaignAddress} "${usdcAddress}" "${swapAdapter}" "${treasury}" "${goalMin}" "${goalMax}" "${deadlineTs}"`);
+  console.log(`     npx hardhat verify --network ${network.name} ${campaignAddress} "${usdcAddress}" "${finalSwapAdapter}" "${treasury}" "${goalMin}" "${goalMax}" "${deadlineTs}"`);
   console.log(`     npx hardhat verify --network ${network.name} ${stakingAddress} "${aaveAddress}" "${usdcAddress}" "${aUsdcAddress}" "${campaignAddress}" "${platformWallet}"`);
   console.log(`     npx hardhat verify --network ${network.name} ${receiverAddress} "${usdcAddress}" "${campaignAddress}" "${bridgeAddress}"`);
   console.log(`  2. Cross-chain setup:`);

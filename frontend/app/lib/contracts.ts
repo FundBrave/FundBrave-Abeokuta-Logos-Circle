@@ -83,8 +83,10 @@ export const MAX_DONATION_USD = 5_000;
 /** FE-M2: Prompt for confirmation when donation exceeds this threshold */
 export const HIGH_VALUE_USD = 500;
 
-/** Quick-select amounts shown on the donate page */
+/** Quick-select amounts shown on the donate page (USDC/stablecoin) */
 export const PRESET_AMOUNTS = [10, 25, 50, 100, 250] as const;
+/** Quick-select amounts for native ETH / WETH donations */
+export const PRESET_AMOUNTS_ETH = [0.005, 0.01, 0.025, 0.05, 0.1] as const;
 /** Quick-select amounts shown on the stake page */
 export const STAKE_PRESETS  = [50, 100, 250, 500] as const;
 
@@ -218,6 +220,32 @@ export const SOURCE_CHAINS: SourceChain[] = [
     bridgeAddress:  (process.env.NEXT_PUBLIC_BRIDGE_OPTIMISM_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
     nativeCurrency: "ETH",
   },
+  // ── Testnet source chains (only active when targeting Base Sepolia) ──────────
+  // These use the mock USDC and FundBraveBridge deployed by 02_deploy_source_bridge.js.
+  // Included here so getSourceChain(11155111/11155420) resolves correctly when a user
+  // switches to these chains in the testnet donate flow.
+  ...((TARGET_CHAIN_ID as number) === 84532 ? [
+    {
+      name:           "Ethereum Sepolia",
+      chainId:        11155111,
+      lzEid:          40161,
+      icon:           "⟠",
+      // MockUSDC deployed by 02_deploy_source_bridge.js on Ethereum Sepolia
+      usdcAddress:    "0x601566d18cdaE8D4347bB6ba43C5C2247D9c1f5a" as Address,
+      bridgeAddress:  "0xbf07FCC10F057E897B2e67982d990701E7434e50" as Address,
+      nativeCurrency: "ETH",
+    },
+    {
+      name:           "Optimism Sepolia",
+      chainId:        11155420,
+      lzEid:          40232,
+      icon:           "🔴",
+      // MockUSDC deployed by 02_deploy_source_bridge.js on Optimism Sepolia
+      usdcAddress:    "0xf1d8e639A2402eD519055326468F99DCfCB3e74b" as Address,
+      bridgeAddress:  "0xB3aA5B4c39e7D0A67fC986A4F442d93E17fF26B6" as Address,
+      nativeCurrency: "ETH",
+    },
+  ] as SourceChain[] : []),
 ];
 
 /** Look up source chain config by EVM chain ID */
@@ -299,8 +327,9 @@ export const CAMPAIGN_ABI = [
     type: "function",
     stateMutability: "nonpayable",
     inputs: [
-      { name: "tokenIn",  type: "address" },
-      { name: "amountIn", type: "uint256" },
+      { name: "tokenIn",    type: "address" },
+      { name: "amountIn",   type: "uint256" },
+      { name: "minUsdcOut", type: "uint256" },  // Gap #5: slippage protection; pass 0 for none
     ],
     outputs: [],
   },
@@ -308,6 +337,36 @@ export const CAMPAIGN_ABI = [
     name: "donateETH",
     type: "function",
     stateMutability: "payable",
+    inputs: [
+      { name: "minUsdcOut", type: "uint256" },  // Gap #5: slippage protection; pass 0 for none
+    ],
+    outputs: [],
+  },
+  {
+    name: "claimRefund",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  {
+    name: "donorTotalContributed",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "donor", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    name: "owner",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    name: "withdrawToTreasury",
+    type: "function",
+    stateMutability: "nonpayable",
     inputs: [],
     outputs: [],
   },
@@ -421,6 +480,49 @@ export const STAKING_ABI = [
     inputs: [],
     outputs: [],
   },
+  {
+    name: "compound",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  // SC-C1: Escrowed cause yield
+  {
+    name: "pendingCauseYield",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "staker", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    name: "pendingCauseTimestamp",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "staker", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    name: "CAUSE_YIELD_RESCUE_WINDOW",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    name: "retryCauseCredit",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "staker", type: "address" }],
+    outputs: [],
+  },
+  {
+    name: "rescueEscrowedCause",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
 ] as const;
 
 export const ERC20_ABI = [
@@ -457,6 +559,17 @@ export const ERC20_ABI = [
     stateMutability: "view",
     inputs: [],
     outputs: [{ name: "", type: "uint8" }],
+  },
+  // Test-only: MockUSDC.mint() — public on testnet, will revert on real ERC20
+  {
+    name: "mint",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to",     type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
   },
 ] as const;
 
@@ -509,14 +622,36 @@ export function friendlyError(err: unknown): string {
     return "Transaction exceeds the rate limit. Try a smaller amount or wait before retrying.";
   if (/execution reverted/i.test(msg))
     return "Transaction was rejected by the contract. Check your balance and try again.";
-  if (/network changed|chain mismatch/i.test(msg))
-    return "Network changed — please reconnect your wallet.";
+  if (/network changed|chain mismatch|does not match the target chain/i.test(msg))
+    return "Wrong network — please switch to the correct chain in your wallet.";
   if (/nonce/i.test(msg))
     return "Transaction ordering error — please reset your wallet activity and try again.";
   if (/gas/i.test(msg))
     return "Gas estimation failed — the transaction may revert.";
+  if (/too many errors|retrying in|RPC endpoint/i.test(msg))
+    return "Your wallet's RPC endpoint is overloaded. In MetaMask: click the network → edit Base Sepolia → add RPC URL: https://sepolia.base.org";
   return "Transaction failed. Please try again.";
 }
+
+// ─── Uniswap V2 Router (for swap quote / slippage floor) ─────────────────────
+// Same router address is used on both Base mainnet and Base Sepolia.
+
+export const UNISWAP_ROUTER_ADDRESS: Address = "0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24";
+/** WETH on Base (used as the intermediate hop for ERC20→USDC swaps) */
+export const WETH_ADDRESS: Address            = "0x4200000000000000000000000000000000000006";
+
+export const UNISWAP_ROUTER_ABI = [
+  {
+    name: "getAmountsOut",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "amountIn", type: "uint256"   },
+      { name: "path",     type: "address[]" },
+    ],
+    outputs: [{ name: "amounts", type: "uint256[]" }],
+  },
+] as const;
 
 // ─── Bridge ABI (FundBraveBridge on source chains) ────────────────────────────
 

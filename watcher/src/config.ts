@@ -34,6 +34,8 @@ export const config = {
   watcherPrivateKey: require_env("WATCHER_PRIVATE_KEY"),
   /** AbeokutaCampaign contract address on Base */
   campaignAddress:   require_env("CAMPAIGN_ADDRESS") as `0x${string}`,
+  /** AbeokutaStaking contract address on Base (optional — harvest disabled if not set) */
+  stakingAddress:    optional_env("STAKING_ADDRESS", "") as `0x${string}` | "",
   /** USDC contract address on Base */
   usdcAddress:       require_env("USDC_ADDRESS") as `0x${string}`,
 
@@ -52,8 +54,10 @@ export const config = {
   solUsdcMint:       optional_env("SOL_USDC_MINT", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
 
   // ── Polling intervals ──────────────────────────────────────────────────
-  btcPollIntervalMs: parseInt(optional_env("BTC_POLL_INTERVAL_MS", "30000")),
-  solPollIntervalMs: parseInt(optional_env("SOL_POLL_INTERVAL_MS", "10000")),
+  btcPollIntervalMs:     parseInt(optional_env("BTC_POLL_INTERVAL_MS", "30000")),
+  solPollIntervalMs:     parseInt(optional_env("SOL_POLL_INTERVAL_MS", "10000")),
+  /** Gap #1: How often to call harvestAndDistribute on the staking contract (default 24h) */
+  harvestIntervalMs:     parseInt(optional_env("HARVEST_INTERVAL_MS", String(24 * 60 * 60 * 1000))),
 
   // ── Bitcoin confirmations ──────────────────────────────────────────────
   /**

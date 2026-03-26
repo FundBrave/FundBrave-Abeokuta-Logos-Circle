@@ -36,6 +36,22 @@ module.exports = {
       accounts: [PRIVATE_KEY],
       chainId: 8453,
     },
+
+    // Ethereum Sepolia (source chain for cross-chain testing)
+    sepolia: {
+      url: process.env.SEPOLIA_RPC || "https://ethereum-sepolia-rpc.publicnode.com",
+      accounts: [PRIVATE_KEY],
+      chainId: 11155111,
+      timeout: 120000,
+    },
+
+    // Optimism Sepolia (source chain for cross-chain testing)
+    optimismSepolia: {
+      url: process.env.OP_SEPOLIA_RPC || "https://sepolia.optimism.io",
+      accounts: [PRIVATE_KEY],
+      chainId: 11155420,
+      timeout: 120000,
+    },
   },
 
   etherscan: {

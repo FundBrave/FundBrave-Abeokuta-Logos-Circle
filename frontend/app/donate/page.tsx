@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient, useBalance, useReadContract } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import Link from "next/link";
 import { ArrowLeft, CheckCircle2, Loader2, AlertCircle, ExternalLink, DollarSign } from "lucide-react";
@@ -19,9 +19,13 @@ import {
   formatUSDC,
   isBaseChain,
   PRESET_AMOUNTS,
+  PRESET_AMOUNTS_ETH,
   MIN_DONATION_USD,
   MAX_DONATION_USD,
   HIGH_VALUE_USD,
+  CONTRACT_ADDRESSES,
+  TARGET_CHAIN_ID,
+  ERC20_ABI,
   type TokenInfo,
 } from "../lib/contracts";
 import type { Address } from "viem";
@@ -36,6 +40,69 @@ export default function DonatePage() {
   const [isApprovalStep, setIsApprovalStep] = useState(false);
   const [showHighValueWarning, setShowHighValueWarning] = useState(false);
 
+  // Testnet faucet — calls MockUSDC.mint(address, 1000 USDC) so testers can donate.
+  // Uses the same pre-simulation approach as useDonate to bypass MetaMask's RPC gas estimation.
+  const publicClient = usePublicClient({ chainId: TARGET_CHAIN_ID });
+  const { writeContract: mintToken, data: mintTxHash, isPending: isMinting, reset: resetMint } = useWriteContract();
+  const { isSuccess: mintSuccess } = useWaitForTransactionReceipt({
+    hash:    mintTxHash,
+    chainId: TARGET_CHAIN_ID,
+  });
+  useEffect(() => {
+    if (mintSuccess) {
+      donate.refetchBalance();
+      donate.refetchAllowance();
+      refetchTokenBalance();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mintSuccess]);
+
+  // Balance for the currently selected ERC20 token (DAI, WETH, USDC)
+  const { data: tokenBalanceData, refetch: refetchTokenBalance } = useReadContract({
+    address:      selectedToken.isNative ? undefined : selectedToken.address as Address,
+    abi:          ERC20_ABI,
+    functionName: "balanceOf",
+    args:         address ? [address] : undefined,
+    chainId:      TARGET_CHAIN_ID,
+    query:        { enabled: !!address && !selectedToken.isNative, refetchInterval: 10_000 },
+  });
+
+  const handleMintTestToken = async (tokenAddress: Address, amount: bigint) => {
+    if (!address) return;
+    const params = {
+      address:      tokenAddress,
+      abi:          ERC20_ABI,
+      functionName: "mint" as const,
+      args:         [address, amount] as const,
+      chainId:      TARGET_CHAIN_ID,
+    };
+    let gas: bigint | undefined;
+    if (publicClient) {
+      try {
+        const { request } = await publicClient.simulateContract({ ...params, account: address });
+        if (request.gas && request.gas <= 1_000_000n) gas = request.gas;
+      } catch { /* fall through */ }
+    }
+    mintToken({ ...params, gas: gas ?? 100_000n });
+  };
+
+  // ETH balance on Base Sepolia (for display when ETH/WETH token is selected)
+  const { data: ethBalance } = useBalance({
+    address,
+    chainId: TARGET_CHAIN_ID,
+    query:   { enabled: !!address, refetchInterval: 10_000 },
+  });
+
+  // ETH/WETH live price for displaying USD equivalent below the input
+  const [ethPriceUSD, setEthPriceUSD] = useState<number | null>(null);
+  useEffect(() => {
+    if (!selectedToken.isNative && selectedToken.symbol !== "WETH") return;
+    fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd")
+      .then((r) => r.json())
+      .then((d) => setEthPriceUSD(d?.ethereum?.usd ?? null))
+      .catch(() => {});
+  }, [selectedToken.symbol]);
+
   const usdcDecimals = selectedToken.decimals;
   const parsedAmount = (() => {
     if (!amount) return 0n;
@@ -44,10 +111,13 @@ export default function DonatePage() {
     const frac = (parts[1] || "").padEnd(usdcDecimals, "0").slice(0, usdcDecimals);
     try {
       const result = BigInt(whole) * BigInt(10 ** usdcDecimals) + BigInt(frac);
-      // FE-H2: Cap at MAX_DONATION_USD to prevent a crafted string from bypassing
-      // float validation and submitting an outsized amount to the contract
-      const cap = BigInt(MAX_DONATION_USD) * 1_000_000n;
-      return result > cap ? 0n : result;
+      // FE-H2: Cap only applies to 6-decimal tokens (USDC).
+      // 18-decimal tokens (ETH, WETH, DAI) would exceed the cap in their base units.
+      if (selectedToken.decimals === 6) {
+        const cap = BigInt(MAX_DONATION_USD) * 1_000_000n;
+        return result > cap ? 0n : result;
+      }
+      return result;
     } catch {
       return 0n;
     }
@@ -66,17 +136,26 @@ export default function DonatePage() {
       setIsApprovalStep(false);
       setShowHighValueWarning(false);
       donate.reset();
+    } else {
+      // Eagerly fetch balance when wallet connects (in case the query didn't fire automatically)
+      donate.refetchBalance();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);
 
-  // After approval tx confirms, proceed to donate
+  // After approval tx confirms, automatically proceed to the donation step.
+  // Previously this just cleared isApprovalStep without triggering the donate tx —
+  // the donation was never sent. Now we call proceedAfterApproval directly.
   useEffect(() => {
     if (donate.isSuccess && isApprovalStep) {
       setIsApprovalStep(false);
-      donate.refetchAllowance();
-      // The hook will handle re-calling donateUSDC or donateERC20
+      donate.proceedAfterApproval(
+        selectedToken.address as Address,
+        parsedAmount,
+        selectedToken.symbol === "USDC"
+      );
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [donate.isSuccess]);
 
   // Track when we enter approval step
@@ -107,14 +186,6 @@ export default function DonatePage() {
     } else {
       donate.donateERC20(selectedToken.address as Address, parsedAmount);
     }
-  };
-
-  const handleContinueAfterApproval = () => {
-    donate.proceedAfterApproval(
-      selectedToken.address as Address,
-      parsedAmount,
-      selectedToken.symbol === "USDC"
-    );
   };
 
   if (donate.step === "success") {
@@ -152,8 +223,20 @@ export default function DonatePage() {
           All donations are converted to USDC and held in a transparent multisig treasury.
         </p>
 
+        {/* Campaign goal reached — no further donations accepted */}
+        {stats.maxGoalReached && (
+          <div className="bg-green-500/10 border border-green-500/30 rounded-2xl p-6 mb-6 text-center">
+            <div className="text-3xl mb-3">🎉</div>
+            <h2 className="text-green-400 font-bold text-lg mb-1">Campaign Goal Reached!</h2>
+            <p className="text-white/60 text-sm">
+              The campaign has raised its full goal of ${stats.goalMaxFormatted} USDC.
+              No further donations are being accepted. Thank you to everyone who contributed!
+            </p>
+          </div>
+        )}
+
         {/* Unknown / unsupported chain */}
-        {isConnected && isOnUnknownChain && (
+        {!stats.maxGoalReached && isConnected && isOnUnknownChain && (
           <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 mb-6 flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
             <div>
@@ -166,7 +249,7 @@ export default function DonatePage() {
         )}
 
         {/* Not connected state */}
-        {!isConnected && (
+        {!stats.maxGoalReached && !isConnected && (
           <div className="bg-[#111827] border border-white/10 rounded-2xl p-8 text-center mb-6">
             <p className="text-white/60 mb-4">Connect your wallet to donate.</p>
             <div className="flex justify-center">
@@ -176,7 +259,7 @@ export default function DonatePage() {
         )}
 
         {/* ── Cross-chain mode (non-Base chain) ── */}
-        {isConnected && isOnForeignChain && !isOnUnknownChain && (
+        {!stats.maxGoalReached && isConnected && isOnForeignChain && !isOnUnknownChain && (
           <CrossChainDonate
             onSuccess={(hash) => {
               // Route to success screen via same-chain reset so layout is consistent
@@ -188,7 +271,7 @@ export default function DonatePage() {
         {/* ── Same-chain mode (Base / Base Sepolia) ── */}
         {/* FE-H5: Also guard against unknown chains — isOnUnknownChain implies isOnForeignChain,
             but explicit guard clarifies intent and protects against future logic changes */}
-        {isConnected && !isOnForeignChain && !isOnUnknownChain && (
+        {!stats.maxGoalReached && isConnected && !isOnForeignChain && !isOnUnknownChain && (
           <>
             {/* Token selector */}
             <div className="mb-6">
@@ -197,7 +280,7 @@ export default function DonatePage() {
                 {SUPPORTED_TOKENS.map((token) => (
                   <button
                     key={token.symbol}
-                    onClick={() => { setSelectedToken(token); setAmount(""); }}
+                    onClick={() => { setSelectedToken(token); setAmount(""); resetMint(); }}
                     className={`rounded-xl p-3 text-center text-sm font-medium transition-all cursor-pointer min-h-11 ${
                       selectedToken.symbol === token.symbol
                         ? "bg-[#F97316] text-white shadow-lg shadow-[#F97316]/30"
@@ -240,27 +323,94 @@ export default function DonatePage() {
                 </span>
               </div>
 
-              {/* Preset amounts */}
+              {/* Preset amounts — token-aware */}
               <div className="flex gap-2 mt-3 flex-wrap">
-                {PRESET_AMOUNTS.map((p) => (
+                {(selectedToken.isNative || selectedToken.symbol === "WETH"
+                  ? PRESET_AMOUNTS_ETH
+                  : PRESET_AMOUNTS
+                ).map((p) => (
                   <button
                     key={p}
                     onClick={() => setAmount(p.toString())}
                     className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-white/60 hover:text-white transition-all cursor-pointer min-h-9"
-                    aria-label={`Preset: $${p}`}
+                    aria-label={`Preset: ${p} ${selectedToken.symbol}`}
                   >
-                    ${p}
+                    {selectedToken.isNative || selectedToken.symbol === "WETH"
+                      ? `${p} ETH`
+                      : `$${p}`}
                   </button>
                 ))}
               </div>
 
-              {amount && parseFloat(amount) > 0 && parseFloat(amount) < MIN_DONATION_USD && (
+              {/* USD equivalent for ETH / WETH */}
+              {(selectedToken.isNative || selectedToken.symbol === "WETH") && amount && parseFloat(amount) > 0 && (
+                <p className="text-white/40 text-xs mt-2">
+                  {ethPriceUSD
+                    ? `≈ $${(parseFloat(amount) * ethPriceUSD).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`
+                    : "Fetching price…"}
+                </p>
+              )}
+
+              {amount && parseFloat(amount) > 0 && parseFloat(amount) < MIN_DONATION_USD
+                && !selectedToken.isNative && selectedToken.symbol !== "WETH" && (
                 <p className="text-amber-400 text-xs mt-2">Minimum donation is ${MIN_DONATION_USD} USDC</p>
               )}
-              {amount && parseFloat(amount) > MAX_DONATION_USD && (
+              {amount && parseFloat(amount) > MAX_DONATION_USD
+                && !selectedToken.isNative && selectedToken.symbol !== "WETH" && (
                 <p className="text-amber-400 text-xs mt-2">Maximum per-transaction is ${MAX_DONATION_USD.toLocaleString()} USDC (circuit breaker limit)</p>
               )}
             </div>
+
+            {/* Testnet faucet — visible on Base Sepolia for USDC, DAI, WETH */}
+            {(TARGET_CHAIN_ID as number) === 84532 && !selectedToken.isNative && (() => {
+              const faucetCfg: Record<string, { amount: bigint; label: string }> = {
+                USDC: { amount: 1_000n * 1_000_000n,             label: "Get 1,000 test USDC" },
+                DAI:  { amount: 1_000n * 10n ** 18n,             label: "Get 1,000 test DAI"  },
+                WETH: { amount: 1n    * 10n ** 18n,              label: "Get 1 test WETH"      },
+              };
+              const cfg = faucetCfg[selectedToken.symbol];
+              if (!cfg) return null;
+              return (
+                <div className="bg-[#111827] border border-white/10 rounded-2xl p-4 mb-6 flex items-center justify-between">
+                  <div>
+                    <p className="text-white/60 text-xs">Your {selectedToken.symbol} balance</p>
+                    <p className="text-white text-sm font-medium">
+                      {tokenBalanceData !== undefined
+                        ? selectedToken.decimals === 6
+                          ? `${formatUSDC(tokenBalanceData as bigint)} ${selectedToken.symbol}`
+                          : `${(Number(tokenBalanceData) / 1e18).toFixed(4)} ${selectedToken.symbol}`
+                        : <span className="text-white/40">—</span>}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleMintTestToken(selectedToken.address as Address, cfg.amount)}
+                    disabled={isMinting || mintSuccess}
+                    className="bg-white/10 hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors cursor-pointer"
+                  >
+                    {isMinting ? "Minting…" : mintSuccess ? "✓ Minted" : cfg.label}
+                  </button>
+                </div>
+              );
+            })()}
+
+            {/* ETH balance — shown when ETH or WETH is selected */}
+            {(selectedToken.isNative || selectedToken.symbol === "WETH") && (
+              <div className="bg-[#111827] border border-white/10 rounded-2xl p-4 mb-6 flex items-center justify-between">
+                <div>
+                  <p className="text-white/60 text-xs">Your ETH balance</p>
+                  <p className="text-white text-sm font-medium">
+                    {ethBalance
+                      ? `${parseFloat(ethBalance.formatted).toFixed(4)} ETH`
+                      : <span className="text-white/40">Loading…</span>}
+                  </p>
+                  {ethBalance && ethPriceUSD && (
+                    <p className="text-white/40 text-xs mt-0.5">
+                      ≈ ${(parseFloat(ethBalance.formatted) * ethPriceUSD).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Cross-chain info pill — informational for users on Base */}
             <div className="bg-[#111827] border border-white/10 rounded-2xl p-4 mb-6">
@@ -325,22 +475,16 @@ export default function DonatePage() {
               <StepBanner step={2} total={2} label="Confirming on chain…" sub="Waiting for block confirmation" />
             )}
 
-            {/* After approval succeeds, need to proceed */}
+            {/* After approval — show a brief "Submitting donation…" state while auto-proceed fires */}
             {donate.isSuccess && isApprovalStep && (
-              <button
-                onClick={handleContinueAfterApproval}
-                disabled={donate.isProcessing}
-                className="bg-[#F97316] hover:bg-[#EA580C] disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-xl transition-colors w-full text-base mb-4 cursor-pointer min-h-12"
-              >
-                Continue: Submit Donation
-              </button>
+              <StepBanner step={2} total={2} label="Submitting donation…" sub="Approval confirmed — sending donation now" />
             )}
 
             {/* Donate button */}
             {!isApprovalStep && (
               <button
                 onClick={handleDonate}
-                disabled={!amount || parseFloat(amount) < MIN_DONATION_USD || parseFloat(amount) > MAX_DONATION_USD || donate.isProcessing || showHighValueWarning}
+                disabled={!amount || parseFloat(amount) <= 0 || (!selectedToken.isNative && selectedToken.symbol !== "WETH" && (parseFloat(amount) < MIN_DONATION_USD || parseFloat(amount) > MAX_DONATION_USD)) || donate.isProcessing || showHighValueWarning}
                 className="bg-[#F97316] hover:bg-[#EA580C] disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-xl transition-colors w-full text-base flex items-center justify-center gap-2 min-h-12 cursor-pointer"
                 aria-label={`Donate ${amount ? `${amount} ${selectedToken.symbol}` : ""}`}
               >

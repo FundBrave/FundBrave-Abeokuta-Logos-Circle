@@ -79,7 +79,8 @@ contract AbeokutaBridgeReceiver is Ownable, ReentrancyGuard, Pausable {
 
         // Approve campaign to pull USDC via safeTransferFrom in creditDonation (pull pattern, M1).
         // When setCampaign changes the campaign address, this approval is revoked and re-granted.
-        IERC20(_usdc).approve(_campaign, type(uint256).max);
+        // L-7: Use forceApprove (SafeERC20) for tokens that revert on non-zero→non-zero approvals.
+        IERC20(_usdc).forceApprove(_campaign, type(uint256).max);
 
         // Default EID → chain name mappings (LayerZero V2 EIDs)
         eidToChainName[30101] = "ethereum";
@@ -131,6 +132,23 @@ contract AbeokutaBridgeReceiver is Ownable, ReentrancyGuard, Pausable {
         campaign.creditDonation(donor, amount, chainName);
 
         emit CrossChainDonationReceived(donor, amount, srcEid, chainName);
+    }
+
+    /**
+     * @notice M-6: Rejects cross-chain wealth-building (staking) actions with a clear error.
+     * @dev Required for FundBrave bridge interface compatibility.
+     *      Cross-chain staking is not supported in this single-campaign app; staking must be
+     *      initiated same-chain. Reverts so the bridge can surface a clear error to the caller
+     *      rather than silently trapping USDC in the receiver contract.
+     */
+    function handleCrossChainWealthBuilding(
+        address /* donor */,
+        uint256 /* fundraiserId */,
+        uint256 /* amount */,
+        bytes32 /* messageHash */,
+        uint32  /* srcEid */
+    ) external view onlyBridge {
+        revert("Cross-chain wealth building not supported: stake directly on Base");
     }
 
     /**

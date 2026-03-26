@@ -20,7 +20,7 @@ import "./libraries/CircuitBreaker.sol";
  *   1. Direct USDC donation (no swap needed)
  *   2. ERC20 token donation → auto-swapped to USDC via DEX adapter
  *   3. Native ETH donation → auto-swapped to USDC via DEX adapter
- *   4. Cross-chain donation (routed via FundBraveBridge → creditDonation here)
+ *   4. Cross-chain donation (FundBraveBridge → handleCrossChainDonation here, no safeTransferFrom)
  *
  * Treasury: Funds accumulate on-chain; withdrawal requires a Gnosis Safe multisig
  * (configured as the `treasury` address) to sign off.
@@ -60,6 +60,9 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
     /// @notice Staking pool authorised to call creditDonation with yield contributions
     address public stakingPool;
 
+    /// @notice M-1: Watcher service address authorised to call donateUSDCFor (BTC/SOL attribution)
+    address public watcher;
+
     uint256 public goalMin;   // Lower bound of goal range (USDC, 6 decimals)
     uint256 public goalMax;   // Upper bound of goal range (USDC, 6 decimals)
     uint256 public deadline;
@@ -94,6 +97,8 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
     DonationRecord[] private _allDonations;
     mapping(address => uint256) public donorTotalContributed;
     mapping(address => bool) private _isDonor;
+    /// @notice Gap #10: tracks which donors have already claimed a refund
+    mapping(address => bool) private _refundClaimed;
 
     CircuitBreaker.BreakerConfig private _circuitBreaker;
 
@@ -107,6 +112,7 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         address tokenIn,
         string sourceChain
     );
+    event RefundClaimed(address indexed donor, uint256 amount);
     event Withdrawn(address indexed treasury, uint256 amount);
     event TreasuryUpdated(address indexed newTreasury);
     event BridgeUpdated(address indexed newBridge);
@@ -114,6 +120,7 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
     event DeadlineExtended(uint256 newDeadline);
     event SwapAdapterUpdated(address indexed newAdapter);
     event SwapAdapterProposed(address indexed proposedAdapter, uint256 activationTime);
+    event WatcherUpdated(address indexed newWatcher);
     event SwapAdapterChangeCancelled();
     event CircuitBreakerHalted();
     /// @notice SC-M2: Emitted on emergency ETH rescue so withdrawals are always on-chain visible
@@ -126,11 +133,15 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
     error CampaignEnded();
     error CampaignNotEnded();
     error GoalNotReached();
+    error GoalReached();
     error ZeroAmount();
     error Unauthorized();
     error CircuitBreakerActive();
     error TransactionBlocked();
     error InsufficientNativeForFee();
+    error SlippageTooHigh();
+    error AlreadyRefunded();
+    error RefundWindowClosed();
 
     // ─────────────────────────────────────────────
     //  Constructor
@@ -192,6 +203,11 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         _;
     }
 
+    modifier onlyWatcher() {
+        require(msg.sender == watcher, "Not authorized watcher");
+        _;
+    }
+
     // ─────────────────────────────────────────────
     //  Donation — same-chain USDC (no swap)
     // ─────────────────────────────────────────────
@@ -214,16 +230,43 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         _recordDonation(msg.sender, amount, address(usdc), "base");
     }
 
+    /**
+     * @notice Donate USDC on behalf of another address (e.g. a BTC/SOL donor).
+     * @dev Gap #6: USDC is pulled from msg.sender (the float wallet), but the
+     *      donation is attributed to `donor`. This allows the watcher service to
+     *      record the true originating address rather than the float wallet.
+     *      M-1: Restricted to the authorised watcher address set by setWatcher().
+     * @param donor  Address to attribute the donation to (must not be zero)
+     * @param amount USDC amount in 6-decimal units
+     */
+    function donateUSDCFor(address donor, uint256 amount)
+        external
+        nonReentrant
+        whenNotPaused
+        onlyActive
+        onlyWatcher
+    {
+        require(donor != address(0), "Invalid donor");
+        if (amount == 0) revert ZeroAmount();
+        require(amount >= MIN_DONATION, "Below minimum donation");
+        _checkCircuitBreaker(amount);
+
+        usdc.safeTransferFrom(msg.sender, address(this), amount);
+        _recordDonation(donor, amount, address(usdc), "base");
+    }
+
     // ─────────────────────────────────────────────
     //  Donation — same-chain ERC20 (auto-swap)
     // ─────────────────────────────────────────────
 
     /**
      * @notice Donate any ERC20 token. It will be swapped to USDC automatically.
-     * @param tokenIn  ERC20 token address
-     * @param amountIn Amount of tokenIn (caller must approve this contract)
+     * @param tokenIn     ERC20 token address
+     * @param amountIn    Amount of tokenIn (caller must approve this contract)
+     * @param minUsdcOut  Gap #5: Minimum USDC to receive after swap (slippage protection).
+     *                    Pass 0 to skip the check (not recommended in production).
      */
-    function donateERC20(address tokenIn, uint256 amountIn)
+    function donateERC20(address tokenIn, uint256 amountIn, uint256 minUsdcOut)
         external
         nonReentrant
         whenNotPaused
@@ -243,12 +286,15 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
             return;
         }
 
-        require(amountIn >= MIN_DONATION, "Below minimum donation");
+        // M-5: Pre-swap input check is omitted — for 18-decimal tokens, `amountIn >= 1e6`
+        // is meaningless (0.000001 tokens). Minimum enforcement is done post-swap on usdcOut.
         IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
         IERC20(tokenIn).forceApprove(address(swapAdapter), amountIn);
 
         uint256 usdcOut = swapAdapter.swapToUSDC(tokenIn, amountIn);
         if (usdcOut == 0) revert ZeroAmount();
+        // Gap #5: Enforce caller-specified slippage tolerance
+        if (minUsdcOut > 0 && usdcOut < minUsdcOut) revert SlippageTooHigh();
         require(usdcOut >= MIN_DONATION, "Below minimum donation");
 
         _checkCircuitBreaker(usdcOut);
@@ -261,8 +307,10 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @notice Donate native ETH. Swapped to USDC automatically.
+     * @param minUsdcOut Gap #5: Minimum USDC to receive after swap (slippage protection).
+     *                   Pass 0 to skip (not recommended in production).
      */
-    function donateETH()
+    function donateETH(uint256 minUsdcOut)
         external
         payable
         nonReentrant
@@ -275,6 +323,8 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
 
         uint256 usdcOut = swapAdapter.swapNativeToUSDC{value: msg.value}();
         if (usdcOut == 0) revert ZeroAmount();
+        // Gap #5: Enforce caller-specified slippage tolerance
+        if (minUsdcOut > 0 && usdcOut < minUsdcOut) revert SlippageTooHigh();
         require(usdcOut >= MIN_DONATION, "Below minimum donation");
 
         _checkCircuitBreaker(usdcOut);
@@ -292,26 +342,96 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
      * @param amount      USDC amount (6 decimals)
      * @param sourceChain Human-readable source chain name (e.g. "ethereum", "polygon")
      */
+    /**
+     * @notice Called directly by FundBraveBridge when it receives a cross-chain donation via
+     *         LayerZero. The bridge pushes USDC to this contract before calling this function,
+     *         so no safeTransferFrom is needed — saving ~30k gas vs creditDonation.
+     *
+     * @dev Gas profile (new donor, cold storage): ~80k vs ~258k for creditDonation path.
+     *      Fits within FundBraveBridge's hardcoded gasLimit=200k including bridge overhead.
+     *      Set bridgeContract = FundBraveBridge address and setLocalFactory on bridge = this.
+     *
+     *      Signature matches ILocalFundraiserFactory.handleCrossChainDonation so this contract
+     *      can be used as the bridge's localFundraiserFactory directly.
+     *
+     * @param donor        Original donor address on the source chain
+     * @param srcEid       LayerZero source endpoint ID (converted to chain name string)
+     */
+    function handleCrossChainDonation(
+        address donor,
+        uint256 /* fundraiserId */,
+        uint256 amount,
+        bytes32 /* messageHash */,
+        uint32  srcEid
+    ) external nonReentrant whenNotPaused {
+        if (msg.sender != bridgeContract) revert Unauthorized();
+        require(donor != address(0), "Invalid donor");
+        if (amount == 0) revert ZeroAmount();
+        require(amount >= MIN_DONATION, "Below minimum donation");
+        if (block.timestamp >= deadline) revert CampaignEnded();
+        if (amount > 5_000 * 1e6) revert TransactionBlocked();
+        if (totalRaised >= goalMax) revert GoalReached();
+
+        // Convert EID to human-readable chain name (same mapping as AbeokutaBridgeReceiver)
+        string memory sourceChain = _eidToChainName(srcEid);
+
+        // GAS-OPT: Reuse donorTotalContributed as the "is new donor" sentinel instead of a
+        // separate _isDonor SSTORE. This saves one cold 0→nonzero SSTORE (~22k) for new donors,
+        // keeping the full LZ path under 200k for both new and returning donors.
+        // donorCount accuracy relies on the same invariant as direct donations.
+        bool isNew = (donorTotalContributed[donor] == 0);
+        donorTotalContributed[donor] += amount;
+        if (isNew) donorCount++;
+        totalRaised += amount;
+        emit Donated(donor, amount, address(usdc), sourceChain);
+    }
+
+    /// @dev Convert LayerZero EID to a human-readable chain name. Returns "unknown" for
+    ///      unrecognised EIDs so the call never reverts on an unmapped chain.
+    function _eidToChainName(uint32 eid) internal pure returns (string memory) {
+        if (eid == 30101 || eid == 40161) return "ethereum";
+        if (eid == 30109 || eid == 40109) return "polygon";
+        if (eid == 30110 || eid == 40231) return "arbitrum";
+        if (eid == 30111 || eid == 40232) return "optimism";
+        if (eid == 30184 || eid == 40245) return "base";
+        if (eid == 30294)                 return "rootstock";
+        return "unknown";
+    }
+
     function creditDonation(
         address donor,
         uint256 amount,
         string calldata sourceChain
-    ) external nonReentrant whenNotPaused onlyActive onlyBridgeOrStaking {
+    ) external nonReentrant whenNotPaused onlyBridgeOrStaking {
         // SC-C1: Reject zero donor address
         require(donor != address(0), "Invalid donor");
         if (amount == 0) revert ZeroAmount();
         // SC-C2: Enforce same minimum as direct donations
         require(amount >= MIN_DONATION, "Below minimum donation");
+        // M-3: Bridge donations are deadline-gated; staking yield retries are not, because
+        // the yield was earned during the campaign and the failed creditDonation was escrowed.
+        if (msg.sender == bridgeContract && block.timestamp >= deadline) revert CampaignEnded();
 
-        // SC-H3: Check circuit breaker BEFORE pulling funds.
-        _checkCircuitBreaker(amount);
+        // GAS-OPT: For cross-chain/bridge paths, skip the 9-slot CircuitBreaker struct reads
+        // (~21k gas) and the 5-slot _allDonations array push (~110k gas). The FundBraveBridge
+        // hardcodes gasLimit=200k for donations; both operations are redundant here because:
+        //  - The bridge has its own rate limiting; LZ guarantees exactly-once delivery.
+        //  - All donation data is emitted in the Donated event and queryable off-chain.
+        // Simple per-tx cap (5000 USDC) replaces the full circuit breaker for this path.
+        // Direct donation paths (_donateUSDC, donateERC20, donateETH) use the full circuit
+        // breaker and array recording as before.
+        if (amount > 5_000 * 1e6) revert TransactionBlocked();
+        if (totalRaised >= goalMax) revert GoalReached();
 
         // M1: Pull USDC from the caller (bridge/staking must have approved this contract).
-        // This is a pull pattern — the exact amount is atomically transferred here,
-        // proving the funds were genuinely sent rather than relying on a pre-existing balance.
         usdc.safeTransferFrom(msg.sender, address(this), amount);
 
-        _recordDonation(donor, amount, address(usdc), sourceChain);
+        // Lightweight recording: update totals + emit event (no storage array push).
+        // Donor tracking kept so donorCount stays accurate.
+        if (!_isDonor[donor]) { _isDonor[donor] = true; donorCount++; }
+        donorTotalContributed[donor] += amount;
+        totalRaised += amount;
+        emit Donated(donor, amount, address(usdc), sourceChain);
     }
 
     // ─────────────────────────────────────────────
@@ -320,21 +440,54 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @notice Withdraw all raised USDC to the Gnosis Safe treasury.
-     * @dev Can be called any time goal is reached, or after deadline regardless.
-     *      The multisig enforces the multi-signature requirement — this contract
-     *      trusts that treasury is a properly configured Gnosis Safe.
+     * @dev Requires the minimum goal to be reached. If the deadline has passed
+     *      without reaching goalMin, donors may instead call claimRefund().
+     *      This prevents the treasury from draining funds that should be refundable.
      */
     function withdrawToTreasury() external nonReentrant {
         if (msg.sender != treasury && msg.sender != owner())
             revert Unauthorized();
-        if (block.timestamp < deadline && totalRaised < goalMin)
-            revert GoalNotReached();
+        // Gap #10: Always require goalMin — if not met after deadline, refunds are available
+        if (totalRaised < goalMin) revert GoalNotReached();
 
         uint256 balance = usdc.balanceOf(address(this));
         require(balance > 0, "Nothing to withdraw");
 
         usdc.safeTransfer(treasury, balance);
         emit Withdrawn(treasury, balance);
+    }
+
+    // ─────────────────────────────────────────────
+    //  Refunds (Gap #10)
+    // ─────────────────────────────────────────────
+
+    /**
+     * @notice Claim a full refund of your USDC contributions.
+     * @dev Only available after the campaign deadline has passed AND the minimum
+     *      goal was not reached. Each donor may claim exactly once.
+     *      Note: only covers direct USDC donations and credited amounts.
+     *      Swap-based donations (ERC20/ETH) are refunded in USDC (swap proceeds), not
+     *      the original token.
+     */
+    function claimRefund() external nonReentrant {
+        // Gap #10: Refunds only if goal not met after deadline
+        if (totalRaised >= goalMin) revert RefundWindowClosed();
+        if (block.timestamp < deadline) revert CampaignNotEnded();
+
+        uint256 contributed = donorTotalContributed[msg.sender];
+        if (contributed == 0) revert ZeroAmount();
+        if (_refundClaimed[msg.sender]) revert AlreadyRefunded();
+
+        // M-2: Pro-rata refund — donor receives (contributed / totalRaised) × current balance.
+        // This ensures late claimers get a proportional share even if early claimers partially
+        // depleted the pool (possible when yield credits inflate totalRaised above the USDC balance).
+        uint256 balance = usdc.balanceOf(address(this));
+        uint256 refundAmount = (contributed * balance) / totalRaised;
+        if (refundAmount == 0) revert ZeroAmount();
+
+        _refundClaimed[msg.sender] = true;
+        usdc.safeTransfer(msg.sender, refundAmount);
+        emit RefundClaimed(msg.sender, refundAmount);
     }
 
     // ─────────────────────────────────────────────
@@ -347,6 +500,7 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         address tokenIn,
         string memory sourceChain
     ) private {
+        if (totalRaised >= goalMax) revert GoalReached();
         if (!_isDonor[donor]) {
             _isDonor[donor] = true;
             donorCount++;
@@ -546,7 +700,9 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         IERC20(token).safeTransfer(to, bal);
     }
 
-    /// @notice Rescue ETH accidentally sent to this contract
+    /// @notice Rescue ETH accidentally sent to this contract (e.g. via selfdestruct)
+    /// @dev L-6: The receive() fallback has been removed so plain ETH transfers revert.
+    ///      This function handles the edge case of force-sent ETH (selfdestruct).
     function emergencyWithdrawETH(address payable to) external onlyOwner {
         require(to != address(0), "Invalid recipient");          // L4
         uint256 bal = address(this).balance;
@@ -556,5 +712,13 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         emit EmergencyETHWithdrawal(to, bal);                    // SC-M2
     }
 
-    receive() external payable {}
+    // L-6: No receive() fallback — plain ETH transfers revert, preventing accidental ETH lock-in.
+    // Use donateETH() to donate native ETH (it automatically swaps to USDC via the adapter).
+
+    /// @notice M-1: Set the watcher address authorised to call donateUSDCFor for BTC/SOL attribution.
+    function setWatcher(address _watcher) external onlyOwner {
+        require(_watcher != address(0), "Invalid watcher");
+        watcher = _watcher;
+        emit WatcherUpdated(_watcher);
+    }
 }

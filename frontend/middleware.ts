@@ -39,6 +39,19 @@ export function middleware(request: NextRequest) {
       "https://*.basescan.org",
       "https://blockstream.info",
       "https://*.solana.com",
+      // Public RPC endpoints used by wagmi/viem defaults for each chain in providers.tsx
+      "https://sepolia.base.org",       // Base Sepolia default RPC
+      "https://mainnet.base.org",       // Base mainnet default RPC
+      "https://sepolia.optimism.io",    // Optimism Sepolia default RPC
+      "https://mainnet.optimism.io",    // Optimism mainnet default RPC
+      "https://*.publicnode.com",       // Ethereum Sepolia publicnode RPC
+      "https://*.infura.io",            // wagmi/RainbowKit may route through Infura
+      "https://cloudflare-eth.com",     // viem mainnet fallback
+      "https://eth.merkle.io",          // viem Ethereum mainnet default RPC
+      "https://polygon-rpc.com",        // Polygon default RPC
+      "https://arb1.arbitrum.io",       // Arbitrum default RPC
+      "https://rpc.ankr.com",           // Ankr public RPCs (base_sepolia, etc.)
+      "https://api.web3modal.org",      // RainbowKit/Reown remote config
     ].join(" "),
     "frame-src 'self' https://*.walletconnect.com https://*.walletconnect.org",
   ].join("; ");

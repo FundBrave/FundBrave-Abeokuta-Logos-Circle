@@ -19,7 +19,7 @@ import { config } from "./config";
 import { initStore, verifyAndResolveStalePending } from "./store";
 import { pollBtc } from "./watchers/btcWatcher";
 import { pollSol } from "./watchers/solWatcher";
-import { getFloatBalance, checkRecentDonation } from "./contract";
+import { getFloatBalance, checkRecentDonation, harvestStaking } from "./contract";
 import { formatUnits } from "viem";
 import { logger } from "./logger";
 
@@ -162,6 +162,35 @@ function startSolPolling(): void {
   _intervals.push(setInterval(run, config.solPollIntervalMs));
 }
 
+// ── Gap #1: Harvest polling loop ───────────────────────────────────────────────
+
+function startHarvestPolling(): void {
+  if (!config.stakingAddress) {
+    logger.info("[harvest] No STAKING_ADDRESS configured — harvest automation disabled");
+    return;
+  }
+  logger.info(
+    `[harvest] Harvest automation enabled — calling harvestAndDistribute every ${config.harvestIntervalMs / 3_600_000}h`
+  );
+
+  let _running = false;
+
+  const run = async () => {
+    if (_shuttingDown || _running) return;
+    _running = true;
+    try {
+      await harvestStaking();
+    } catch (err) {
+      logger.error("[harvest] harvestAndDistribute failed", { error: String(err) });
+    } finally {
+      _running = false;
+    }
+  };
+
+  run(); // run once immediately on startup
+  _intervals.push(setInterval(run, config.harvestIntervalMs));
+}
+
 // ── Graceful shutdown ──────────────────────────────────────────────────────────
 
 async function shutdown(signal: string): Promise<void> {
@@ -206,6 +235,7 @@ async function main(): Promise<void> {
   startHealthServer();
   startBtcPolling();
   startSolPolling();
+  startHarvestPolling();
 }
 
 main().catch((err) => {

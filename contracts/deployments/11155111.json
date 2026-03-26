@@ -1,0 +1,11 @@
+{
+  "network": "Ethereum Sepolia",
+  "chainId": 11155111,
+  "eid": 40161,
+  "deployedAt": "2026-03-24T22:57:13.364Z",
+  "FundBraveBridge": "0xbf07FCC10F057E897B2e67982d990701E7434e50",
+  "MockUSDC": "0x601566d18cdaE8D4347bB6ba43C5C2247D9c1f5a",
+  "MockSwapAdapter": "0xCc02A8aa68747225B6e7788bD64BBdaCb54e5c9e",
+  "LZEndpoint": "0x6edce65403992e310a62460808c4b910d972f10f",
+  "Deployer": "0x396E931faD8c43c7200D70BbDE91e962CfaCCa5e"
+}

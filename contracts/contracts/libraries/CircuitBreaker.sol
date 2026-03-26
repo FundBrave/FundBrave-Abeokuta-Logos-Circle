@@ -108,6 +108,10 @@ library CircuitBreaker {
         _resetWindowsIfNeeded(config);
 
         // Check single transaction limit
+        // M-4: The `config.triggered = true` lines below do not persist because this function
+        // always returns `false` immediately after, causing the caller to revert, which rolls
+        // back all state changes in this call. Automatic latching is therefore not possible.
+        // The campaign contract implements a persistent manual halt via `haltCircuitBreaker()`.
         if (amount > config.maxTransactionAmount) {
             config.triggered = true;
             config.lastTriggeredTime = block.timestamp;

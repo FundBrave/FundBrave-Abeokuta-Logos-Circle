@@ -27,7 +27,7 @@ describe("AbeokutaBridgeReceiver", function () {
     usdcAddress = await mockUSDC.getAddress();
 
     const MockSwap = await ethers.getContractFactory("MockSwapAdapter");
-    mockSwap = await MockSwap.deploy(usdcAddress);
+    mockSwap = await MockSwap.deploy(usdcAddress, ethers.ZeroAddress);
     await mockUSDC.mint(await mockSwap.getAddress(), 100_000n * ONE_USDC);
 
     const now = await time.latest();
@@ -206,6 +206,24 @@ describe("AbeokutaBridgeReceiver", function () {
       await makeDonation(donor1.address, 100n * ONE_USDC, 30101, "dd1");
       await makeDonation(donor2.address, 100n * ONE_USDC, 30101, "dd2");
       expect(await campaign.donorCount()).to.equal(2);
+    });
+  });
+
+  // ─── handleCrossChainWealthBuilding (M-6) ────────────────────────────────
+
+  describe("handleCrossChainWealthBuilding (M-6)", function () {
+    it("reverts with a clear message (wealth building not supported)", async function () {
+      const messageHash = ethers.keccak256(ethers.toUtf8Bytes("wb1"));
+      await expect(
+        receiver.connect(bridge).handleCrossChainWealthBuilding(donor1.address, 0, 100n * ONE_USDC, messageHash, 30101)
+      ).to.be.revertedWith("Cross-chain wealth building not supported: stake directly on Base");
+    });
+
+    it("reverts when called by non-bridge", async function () {
+      const messageHash = ethers.keccak256(ethers.toUtf8Bytes("wb2"));
+      await expect(
+        receiver.connect(other).handleCrossChainWealthBuilding(donor1.address, 0, 100n * ONE_USDC, messageHash, 30101)
+      ).to.be.revertedWithCustomError(receiver, "OnlyBridge");
     });
   });
 

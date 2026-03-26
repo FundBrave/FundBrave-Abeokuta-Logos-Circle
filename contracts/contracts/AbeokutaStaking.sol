@@ -107,6 +107,23 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
     uint256 public constant CAUSE_YIELD_RESCUE_WINDOW = 30 days;
 
     // ─────────────────────────────────────────────
+    //  Staking deadline (Gap #7)
+    // ─────────────────────────────────────────────
+
+    /// @notice Unix timestamp after which new stakes are blocked (0 = no restriction)
+    /// Set to the campaign deadline so stakers can't accumulate yield after the campaign ends.
+    uint256 public stakingDeadline;
+
+    // ─────────────────────────────────────────────
+    //  Staking caps (L-4)
+    // ─────────────────────────────────────────────
+
+    /// @notice Maximum USDC a single address may stake (default 100k USDC)
+    uint256 public maxStakePerAddress = 100_000 * 1e6;
+    /// @notice Maximum total USDC across all stakers (default 1M USDC)
+    uint256 public maxGlobalStake = 1_000_000 * 1e6;
+
+    // ─────────────────────────────────────────────
     //  Harvest rate limiting (SC-H2)
     // ─────────────────────────────────────────────
 
@@ -158,8 +175,14 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
     event CampaignContractProposed(address indexed proposed, uint256 activationTime);
     /// @notice SC-H3: Emitted when a pending campaign contract change is cancelled
     event CampaignContractChangeCancelled();
+    /// @notice Gap #7: Emitted when the staking deadline is updated
+    event StakingDeadlineSet(uint256 deadline);
+    /// @notice Gap #8: Emitted when a staker compounds their yield back into principal
+    event YieldCompounded(address indexed staker, uint256 compoundedAmount, uint256 causeAmount);
     /// @notice SC-M1: Emitted when the platform wallet address is updated
     event PlatformWalletUpdated(address indexed newWallet);
+    /// @notice L-4: Emitted when staking caps are updated
+    event StakingCapsUpdated(uint256 maxPerAddress, uint256 maxGlobal);
 
     // ─────────────────────────────────────────────
     //  Constructor
@@ -184,10 +207,10 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
         campaignContract = _campaignContract;
         platformWallet   = _platformWallet;
 
-        // L3: Use SafeERC20.forceApprove for all approvals
-        IERC20(_usdc).approve(_aavePool, type(uint256).max);
+        // H-2: Use forceApprove for consistency with the rest of the codebase
+        IERC20(_usdc).forceApprove(_aavePool, type(uint256).max);
         // M1: Approve campaign to pull USDC via safeTransferFrom in creditDonation
-        IERC20(_usdc).approve(_campaignContract, type(uint256).max);
+        IERC20(_usdc).forceApprove(_campaignContract, type(uint256).max);
     }
 
     // ─────────────────────────────────────────────
@@ -213,6 +236,14 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
     {
         require(amount > 0, "Amount must be > 0");
         require(amount >= 1e6, "Minimum stake is 1 USDC");
+        // Gap #7: Block new stakes after the campaign has ended
+        require(
+            stakingDeadline == 0 || block.timestamp < stakingDeadline,
+            "Campaign ended: staking closed"
+        );
+        // L-4: Enforce per-address and global caps
+        require(stakerPrincipal[msg.sender] + amount <= maxStakePerAddress, "Exceeds per-address cap");
+        require(totalPrincipal + amount <= maxGlobalStake, "Exceeds global stake cap");
 
         usdc.safeTransferFrom(msg.sender, address(this), amount);
         aavePool.supply(address(usdc), amount, address(this), AAVE_REFERRAL_CODE);
@@ -341,6 +372,83 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
         }
 
         emit StakerYieldClaimed(msg.sender, stakerAmount, causeAmount);
+    }
+
+    // ─────────────────────────────────────────────
+    //  Core — compound (Gap #8)
+    // ─────────────────────────────────────────────
+
+    /**
+     * @notice Compound accumulated yield: re-stakes the staker's portion into Aave
+     *         and credits the cause portion to the campaign, atomically.
+     *
+     * @dev Gap #8: Instead of transferring the staker's yield out, it is re-supplied
+     *      to Aave so it starts accruing Aave interest immediately. The cause portion
+     *      is still credited to the campaign — compounding only affects the staker's share.
+     *      Because the USDC was already withdrawn from Aave by harvestAndDistribute(),
+     *      it is in this contract's balance and can be re-supplied directly.
+     *
+     *      Cannot compound after stakingDeadline — new principal would escape the deadline gate.
+     */
+    function compound()
+        external
+        nonReentrant
+        whenNotPaused
+        updateReward(msg.sender)
+    {
+        // Gap #7: respect deadline - compounding increases principal
+        require(
+            stakingDeadline == 0 || block.timestamp < stakingDeadline,
+            "Campaign ended: compounding closed"
+        );
+
+        uint256 raw = pendingRawYield[msg.sender];
+        if (raw == 0) return;
+
+        pendingRawYield[msg.sender] = 0;
+
+        (, uint16 stakerShare) = getStakerSplit(msg.sender);
+
+        uint256 stakerAmount = (raw * stakerShare) / DISTRIBUTABLE_BPS;
+        uint256 causeAmount  = raw - stakerAmount;
+
+        // Re-stake the staker's portion directly into Aave
+        if (stakerAmount > 0) {
+            // H-4: Validate that harvestAndDistribute() has already moved this USDC to the contract
+            require(
+                usdc.balanceOf(address(this)) >= stakerAmount,
+                "Insufficient harvested yield: call harvestAndDistribute first"
+            );
+            // L-8: Compound must honour the same staking caps as stake() — earned yield should not
+            // allow a staker to silently exceed their position limit or the global pool ceiling.
+            require(
+                stakerPrincipal[msg.sender] + stakerAmount <= maxStakePerAddress,
+                "Compound exceeds per-address cap"
+            );
+            require(
+                totalPrincipal + stakerAmount <= maxGlobalStake,
+                "Compound exceeds global stake cap"
+            );
+            aavePool.supply(address(usdc), stakerAmount, address(this), AAVE_REFERRAL_CODE);
+            stakerPrincipal[msg.sender] += stakerAmount;
+            totalPrincipal += stakerAmount;
+        }
+
+        // Credit cause portion to campaign (same logic as claimYield, with SC-C1 escrow)
+        if (causeAmount > 0 && campaignContract != address(0)) {
+            try IAbeokutaCampaign(campaignContract).creditDonation(
+                msg.sender,
+                causeAmount,
+                "staking-compound"
+            ) {} catch {
+                pendingCauseYield[msg.sender] += causeAmount;
+                if (pendingCauseTimestamp[msg.sender] == 0)
+                    pendingCauseTimestamp[msg.sender] = block.timestamp;
+                emit CauseYieldEscrowed(msg.sender, causeAmount);
+            }
+        }
+
+        emit YieldCompounded(msg.sender, stakerAmount, causeAmount);
     }
 
     // ─────────────────────────────────────────────
@@ -551,6 +659,13 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
         emit CampaignContractChangeCancelled();
     }
 
+    /// @notice Gap #7: Set the deadline after which new stakes (and compounding) are blocked.
+    /// @dev Set to match the campaign deadline. Pass 0 to remove the restriction.
+    function setStakingDeadline(uint256 _deadline) external onlyOwner {
+        stakingDeadline = _deadline;
+        emit StakingDeadlineSet(_deadline);
+    }
+
     function setPlatformWallet(address _wallet) external onlyOwner {
         require(_wallet != address(0), "Invalid");
         platformWallet = _wallet;
@@ -569,11 +684,22 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
     }
 
     /// @notice M3: Rescue stuck tokens (e.g. un-harvested aUSDC yield when no stakers remain)
+    /// @dev H-1: USDC is excluded — it belongs to stakers and must flow through claimYield/compound.
+    ///      Only non-USDC assets (e.g. accidentally received tokens, aUSDC) may be rescued.
     function emergencyWithdraw(address token, address to) external onlyOwner {
         require(to != address(0), "Invalid recipient");
+        require(token != address(usdc), "Cannot rescue USDC: use claim functions");
         uint256 bal = IERC20(token).balanceOf(address(this));
         require(bal > 0, "Nothing to rescue");
         IERC20(token).safeTransfer(to, bal);
+    }
+
+    /// @notice L-4: Update per-address and global staking caps. Owner only.
+    function setStakingCaps(uint256 _maxPerAddress, uint256 _maxGlobal) external onlyOwner {
+        require(_maxPerAddress > 0 && _maxGlobal > 0, "Caps must be > 0");
+        maxStakePerAddress = _maxPerAddress;
+        maxGlobalStake     = _maxGlobal;
+        emit StakingCapsUpdated(_maxPerAddress, _maxGlobal);
     }
 }
 

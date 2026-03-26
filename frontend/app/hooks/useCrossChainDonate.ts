@@ -48,9 +48,10 @@ export interface CrossChainDonateState {
   isProcessing: boolean;
 
   // Actions
-  quote:   (amountUsdc: bigint) => void;
-  execute: (amountUsdc: bigint) => void;
-  reset:   () => void;
+  quote:         (amountUsdc: bigint) => void;
+  execute:       (amountUsdc: bigint) => void;
+  executeNative: (amountWei: bigint)  => void;  // native ETH cross-chain donation
+  reset:         () => void;
 
   // Derived info about current chain
   sourceChainName:   string;
@@ -176,6 +177,21 @@ export function useCrossChainDonate(): CrossChainDonateState {
     });
   }, [bridgeAddress, bridgeConfigured, lzFee, usdcAddress, writeContract, resetWrite]);
 
+  const _sendBridgeNative = useCallback((amount: bigint) => {
+    if (!bridgeConfigured || lzFee === 0n) return;
+    setPhase("send");
+    setStep("sending");
+    resetWrite();
+
+    writeContract({
+      address:      bridgeAddress,
+      abi:          BRIDGE_ABI,
+      functionName: "sendCrossChainActionNative",
+      args:         [DST_EID, FUNDRAISER_ID, ACTION_DONATE, amount],
+      value:        amount + lzFee,  // donation ETH + LZ fee in one msg.value
+    });
+  }, [bridgeAddress, bridgeConfigured, lzFee, writeContract, resetWrite]);
+
   // ─── Public API ─────────────────────────────────────────────────────────────
 
   const quote = useCallback((amountUsdc: bigint) => {
@@ -184,6 +200,14 @@ export function useCrossChainDonate(): CrossChainDonateState {
     setStep("quoting");
     refetchQuote();
   }, [bridgeConfigured, refetchQuote]);
+
+  const executeNative = useCallback((amountWei: bigint) => {
+    if (!address || amountWei === 0n || !bridgeConfigured) return;
+    if (lzFee === 0n) { setErrorMsg("Please wait for fee quote to load."); return; }
+    setPendingAmount(amountWei);
+    setErrorMsg("");
+    _sendBridgeNative(amountWei);
+  }, [address, bridgeConfigured, lzFee, _sendBridgeNative]);
 
   const execute = useCallback((amountUsdc: bigint) => {
     if (!address || amountUsdc === 0n || !bridgeConfigured) return;
@@ -238,6 +262,7 @@ export function useCrossChainDonate(): CrossChainDonateState {
     isProcessing: step === "quoting" || step === "approving" || step === "sending" || step === "confirming",
     quote,
     execute,
+    executeNative,
     reset,
     sourceChainName:   srcChain?.name  ?? "Unknown",
     sourceChainIcon:   srcChain?.icon  ?? "🔗",

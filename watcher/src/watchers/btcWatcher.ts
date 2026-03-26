@@ -12,7 +12,7 @@ import axios from "axios";
 import { config } from "../config";
 import { isBtcProcessed, markBtcPending, markBtcProcessed, clearBtcPending } from "../store";
 import { getBtcPrice } from "../price";
-import { donateToCampaign } from "../contract";
+import { donateToCampaign, deriveDonorAddress } from "../contract";
 import { withRetry, FailureTracker } from "../utils";
 import { logger } from "../logger";
 
@@ -22,9 +22,16 @@ interface BtcVout {
   value: number; // satoshis
 }
 
+interface BtcVin {
+  prevout?: {
+    scriptpubkey_address?: string;
+  };
+}
+
 interface BtcTx {
   txid: string;
   status: { confirmed: boolean; block_height?: number };
+  vin: BtcVin[];
   vout: BtcVout[];
 }
 
@@ -100,6 +107,15 @@ function getReceivedSatoshis(tx: BtcTx): number {
     .reduce((sum, o) => sum + o.value, 0);
 }
 
+/**
+ * Gap #6: Extract the primary sender address from a BTC transaction.
+ * Uses the first input's prevout address as the "sender".
+ * Returns undefined if the sender address is not available (e.g. coinbase txs).
+ */
+function getBtcSenderAddress(tx: BtcTx): string | undefined {
+  return tx.vin[0]?.prevout?.scriptpubkey_address;
+}
+
 export async function pollBtc(): Promise<void> {
   if (!config.btcAddress) return;
 
@@ -170,8 +186,12 @@ export async function pollBtc(): Promise<void> {
     // Two-phase commit: mark pending before donation to detect crashes
     await markBtcPending(tx.txid);
 
+    // Gap #6: Derive a deterministic EVM pseudo-address for the BTC sender
+    const senderAddr = getBtcSenderAddress(tx);
+    const donor = senderAddr ? deriveDonorAddress("btc", senderAddr) : undefined;
+
     try {
-      const baseTxHash = await donateToCampaign(usdValue, "btc", tx.txid);
+      const baseTxHash = await donateToCampaign(usdValue, "btc", tx.txid, donor);
       logger.info(`[btc] Donation complete`, { txid: tx.txid, baseTxHash });
       await markBtcProcessed(tx.txid);
       _donateFailures.reset();

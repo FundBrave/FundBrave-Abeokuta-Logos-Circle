@@ -7,4 +7,7 @@ interface IAbeokutaCampaign {
         uint256 amount,
         string calldata sourceChain
     ) external;
+
+    /// @notice Returns true if the campaign deadline has not yet passed
+    function isActive() external view returns (bool);
 }

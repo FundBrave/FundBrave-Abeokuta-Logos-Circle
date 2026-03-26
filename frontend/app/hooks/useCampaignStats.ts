@@ -68,6 +68,7 @@ export function useCampaignStats() {
     donationsCount:   campaignStats?.[5] ?? 0n,
     isActive:         campaignStats?.[6] ?? false,
     minGoalReached:   campaignStats?.[7] ?? false,
+    maxGoalReached:   campaignStats ? campaignStats[0] >= campaignStats[2] : false,
 
     progressPercent:  progressBps ? Number(progressBps) / 100 : 0,
 

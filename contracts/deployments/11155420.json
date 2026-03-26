@@ -1,0 +1,11 @@
+{
+  "network": "Optimism Sepolia",
+  "chainId": 11155420,
+  "eid": 40232,
+  "deployedAt": "2026-03-24T22:57:38.649Z",
+  "FundBraveBridge": "0xB3aA5B4c39e7D0A67fC986A4F442d93E17fF26B6",
+  "MockUSDC": "0xf1d8e639A2402eD519055326468F99DCfCB3e74b",
+  "MockSwapAdapter": "0x0C3D5a0712C0045Ccad7bF2a13f9F36B5f7cd753",
+  "LZEndpoint": "0x6edce65403992e310a62460808c4b910d972f10f",
+  "Deployer": "0x396E931faD8c43c7200D70BbDE91e962CfaCCa5e"
+}

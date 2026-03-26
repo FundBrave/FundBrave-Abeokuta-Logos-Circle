@@ -21,7 +21,7 @@ import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { config } from "../config";
 import { isSolProcessed, markSolPending, markSolProcessed, clearSolPending } from "../store";
 import { getSolPrice } from "../price";
-import { donateToCampaign } from "../contract";
+import { donateToCampaign, deriveDonorAddress } from "../contract";
 import { withRetry, FailureTracker } from "../utils";
 import { logger } from "../logger";
 
@@ -57,6 +57,14 @@ function parseTokenAmount(raw: string | undefined, label: string): number {
     throw new Error(`Invalid ${label} token amount: ${JSON.stringify(raw)}`);
   }
   return n;
+}
+
+/**
+ * Gap #6: Extract the primary sender (fee payer) from a Solana transaction.
+ * accountKeys[0] is the fee payer and is always the initiating signer.
+ */
+function getSolSenderAddress(tx: ParsedTransactionWithMeta): string | undefined {
+  return tx.transaction.message.accountKeys[0]?.pubkey.toBase58();
 }
 
 /**
@@ -187,6 +195,10 @@ export async function pollSol(): Promise<void> {
       continue;
     }
 
+    // Gap #6: Derive a deterministic EVM pseudo-address for the SOL sender
+    const solSender = getSolSenderAddress(tx);
+    const donor = solSender ? deriveDonorAddress("sol", solSender) : undefined;
+
     // ── Check native SOL ──────────────────────────────────────────────────
     const lamports = getSolReceived(tx);
     if (lamports > 0) {
@@ -208,7 +220,7 @@ export async function pollSol(): Promise<void> {
       if (usdValue >= config.minDonationUsd) {
         await markSolPending(signature);
         try {
-          const hash = await donateToCampaign(usdValue, "sol", signature);
+          const hash = await donateToCampaign(usdValue, "sol", signature, donor);
           logger.info(`[sol] Donation complete`, { signature, baseTxHash: hash });
           await markSolProcessed(signature);
           _donateFailures.reset();
@@ -242,7 +254,7 @@ export async function pollSol(): Promise<void> {
       if (usdcAmount >= config.minDonationUsd) {
         await markSolPending(signature);
         try {
-          const hash = await donateToCampaign(usdcAmount, "sol", signature);
+          const hash = await donateToCampaign(usdcAmount, "sol", signature, donor);
           logger.info(`[sol] Donation complete`, { signature, baseTxHash: hash });
           await markSolProcessed(signature);
           _donateFailures.reset();

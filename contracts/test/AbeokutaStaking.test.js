@@ -29,7 +29,7 @@ describe("AbeokutaStaking", function () {
     usdcAddress = await mockUSDC.getAddress();
 
     const MockSwap = await ethers.getContractFactory("MockSwapAdapter");
-    const mockSwap = await MockSwap.deploy(usdcAddress);
+    const mockSwap = await MockSwap.deploy(usdcAddress, ethers.ZeroAddress);
     await mockUSDC.mint(await mockSwap.getAddress(), 100_000n * ONE_USDC);
 
     const MockAave = await ethers.getContractFactory("MockAavePool");
@@ -724,7 +724,7 @@ describe("AbeokutaStaking", function () {
     });
   });
 
-  // ─── emergencyWithdraw (M3) ──────────────────────────────────────────────
+  // ─── emergencyWithdraw (M3 / H-1) ────────────────────────────────────────
 
   describe("emergencyWithdraw", function () {
     it("owner can rescue stuck aUSDC tokens (M3)", async function () {
@@ -738,6 +738,19 @@ describe("AbeokutaStaking", function () {
 
       await staking.emergencyWithdraw(aTokenAddr, owner.address);
       expect(await (await ethers.getContractAt("MockUSDC", aTokenAddr)).balanceOf(stakingAddress)).to.equal(0);
+    });
+
+    it("H-1: reverts when trying to rescue USDC (protects staker yield)", async function () {
+      // Stake some USDC and harvest yield so there's USDC in the contract
+      await staking.connect(staker1).stake(500n * ONE_USDC);
+      await simulateYield(50n * ONE_USDC);
+      await staking.harvestAndDistribute();
+      // There should be some USDC sitting in the contract (harvested yield)
+      const stakingBal = await mockUSDC.balanceOf(await staking.getAddress());
+      expect(stakingBal).to.be.gt(0);
+
+      await expect(staking.emergencyWithdraw(usdcAddress, owner.address))
+        .to.be.revertedWith("Cannot rescue USDC: use claim functions");
     });
 
     it("reverts with zero recipient (L4)", async function () {
@@ -756,6 +769,100 @@ describe("AbeokutaStaking", function () {
     it("non-owner cannot call emergencyWithdraw", async function () {
       await staking.connect(staker1).stake(100n * ONE_USDC);
       await expect(staking.connect(other).emergencyWithdraw(aTokenAddress, other.address)).to.be.reverted;
+    });
+  });
+
+  // ─── compound (Gap #8) ────────────────────────────────────────────────────
+
+  describe("compound (Gap #8)", function () {
+    it("re-stakes staker yield back into Aave and credits cause to campaign", async function () {
+      const principal = 1_000n * ONE_USDC;
+      await staking.connect(staker1).stake(principal);
+      await simulateYield(100n * ONE_USDC);
+      await staking.harvestAndDistribute();
+
+      const totalBefore    = await staking.totalPrincipal();
+      const stakBefore     = await staking.stakerPrincipal(staker1.address);
+      const campaignBefore = await mockUSDC.balanceOf(await campaign.getAddress());
+
+      await expect(staking.connect(staker1).compound())
+        .to.emit(staking, "YieldCompounded");
+
+      // Staker principal increased (their portion re-staked)
+      expect(await staking.stakerPrincipal(staker1.address)).to.be.gt(stakBefore);
+      expect(await staking.totalPrincipal()).to.be.gt(totalBefore);
+      // Campaign received cause yield credit
+      expect(await mockUSDC.balanceOf(await campaign.getAddress())).to.be.gt(campaignBefore);
+    });
+
+    it("H-4: compound succeeds only after harvestAndDistribute has deposited USDC", async function () {
+      await staking.connect(staker1).stake(1_000n * ONE_USDC);
+      await simulateYield(50n * ONE_USDC);
+      // Without harvest, yieldPerTokenStored = 0 → pendingRawYield = 0 → compound no-ops.
+      // The H-4 balance check fires when pendingRawYield > 0 but USDC was not deposited.
+      // After harvest, USDC lands in the contract and compound proceeds normally.
+      await staking.harvestAndDistribute();
+      const stakeBefore = await staking.stakerPrincipal(staker1.address);
+      await staking.connect(staker1).compound();
+      // Principal increased — confirms compound executed with sufficient USDC (H-4 passed)
+      expect(await staking.stakerPrincipal(staker1.address)).to.be.gt(stakeBefore);
+    });
+
+    it("reverts after staking deadline (Gap #7)", async function () {
+      await staking.connect(staker1).stake(1_000n * ONE_USDC);
+      await simulateYield(50n * ONE_USDC);
+      await staking.harvestAndDistribute();
+
+      const now = (await ethers.provider.getBlock("latest")).timestamp;
+      await staking.setStakingDeadline(now + 1);
+      await time.increase(2);
+
+      await expect(staking.connect(staker1).compound())
+        .to.be.revertedWith("Campaign ended: compounding closed");
+    });
+
+    it("no-op when pending yield is zero", async function () {
+      await staking.connect(staker1).stake(1_000n * ONE_USDC);
+      // No yield harvested — compound should not revert, just return
+      await staking.connect(staker1).compound();
+      expect(await staking.stakerPrincipal(staker1.address)).to.equal(1_000n * ONE_USDC);
+    });
+  });
+
+  // ─── Staking caps (L-4) ──────────────────────────────────────────────────
+
+  describe("Staking caps (L-4)", function () {
+    it("reverts when stake exceeds per-address cap", async function () {
+      const cap = 1_000n * ONE_USDC;
+      await staking.setStakingCaps(cap, 10_000_000n * ONE_USDC);
+      await staking.connect(staker1).stake(cap); // exactly at cap — ok
+      await expect(staking.connect(staker1).stake(ONE_USDC))
+        .to.be.revertedWith("Exceeds per-address cap");
+    });
+
+    it("reverts when stake exceeds global cap", async function () {
+      const globalCap = 500n * ONE_USDC;
+      await staking.setStakingCaps(10_000_000n * ONE_USDC, globalCap);
+      await staking.connect(staker1).stake(globalCap); // exactly at cap
+      await expect(staking.connect(staker2).stake(ONE_USDC))
+        .to.be.revertedWith("Exceeds global stake cap");
+    });
+
+    it("owner can update caps and emits StakingCapsUpdated", async function () {
+      await expect(staking.setStakingCaps(50_000n * ONE_USDC, 500_000n * ONE_USDC))
+        .to.emit(staking, "StakingCapsUpdated")
+        .withArgs(50_000n * ONE_USDC, 500_000n * ONE_USDC);
+      expect(await staking.maxStakePerAddress()).to.equal(50_000n * ONE_USDC);
+      expect(await staking.maxGlobalStake()).to.equal(500_000n * ONE_USDC);
+    });
+
+    it("setStakingCaps reverts when cap is zero", async function () {
+      await expect(staking.setStakingCaps(0, 100_000n * ONE_USDC))
+        .to.be.revertedWith("Caps must be > 0");
+    });
+
+    it("non-owner cannot update caps", async function () {
+      await expect(staking.connect(other).setStakingCaps(1n, 1n)).to.be.reverted;
     });
   });
 });

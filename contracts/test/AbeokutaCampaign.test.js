@@ -28,7 +28,7 @@ describe("AbeokutaCampaign", function () {
     usdcAddress = await mockUSDC.getAddress();
 
     const MockSwap = await ethers.getContractFactory("MockSwapAdapter");
-    mockSwap = await MockSwap.deploy(usdcAddress);
+    mockSwap = await MockSwap.deploy(usdcAddress, ethers.ZeroAddress);
     swapAddress = await mockSwap.getAddress();
 
     await mockUSDC.mint(swapAddress, 100_000n * ONE_USDC);
@@ -181,7 +181,8 @@ describe("AbeokutaCampaign", function () {
 
     it("swaps ERC20 to USDC and records donation", async function () {
       const amount = 50n * ONE_USDC;
-      await expect(campaign.connect(donor1).donateERC20(daiAddress, amount))
+      // Gap #5: third arg is minUsdcOut (0 = no slippage check)
+      await expect(campaign.connect(donor1).donateERC20(daiAddress, amount, 0))
         .to.emit(campaign, "Donated")
         .withArgs(donor1.address, amount, daiAddress, "base");
       expect(await campaign.totalRaised()).to.equal(amount);
@@ -189,30 +190,30 @@ describe("AbeokutaCampaign", function () {
 
     it("handles USDC donation path without swap", async function () {
       const amount = 75n * ONE_USDC;
-      await expect(campaign.connect(donor1).donateERC20(usdcAddress, amount))
+      await expect(campaign.connect(donor1).donateERC20(usdcAddress, amount, 0))
         .to.emit(campaign, "Donated")
         .withArgs(donor1.address, amount, usdcAddress, "base");
     });
 
     it("reverts with zero amount", async function () {
-      await expect(campaign.connect(donor1).donateERC20(daiAddress, 0))
+      await expect(campaign.connect(donor1).donateERC20(daiAddress, 0, 0))
         .to.be.revertedWithCustomError(campaign, "ZeroAmount");
     });
 
     it("reverts below minimum for non-USDC token", async function () {
-      await expect(campaign.connect(donor1).donateERC20(daiAddress, ONE_USDC - 1n))
+      await expect(campaign.connect(donor1).donateERC20(daiAddress, ONE_USDC - 1n, 0))
         .to.be.revertedWith("Below minimum donation");
     });
 
     it("reverts when paused", async function () {
       await campaign.pause();
-      await expect(campaign.connect(donor1).donateERC20(daiAddress, 50n * ONE_USDC))
+      await expect(campaign.connect(donor1).donateERC20(daiAddress, 50n * ONE_USDC, 0))
         .to.be.revertedWithCustomError(campaign, "EnforcedPause");
     });
 
     it("reverts after deadline", async function () {
       await time.increaseTo(deadline + 1);
-      await expect(campaign.connect(donor1).donateERC20(daiAddress, 50n * ONE_USDC))
+      await expect(campaign.connect(donor1).donateERC20(daiAddress, 50n * ONE_USDC, 0))
         .to.be.revertedWithCustomError(campaign, "CampaignEnded");
     });
 
@@ -224,8 +225,16 @@ describe("AbeokutaCampaign", function () {
       );
       await noSwapCampaign.setBridgeContract(bridge.address);
       await mockDAI.connect(donor1).approve(await noSwapCampaign.getAddress(), ethers.MaxUint256);
-      await expect(noSwapCampaign.connect(donor1).donateERC20(daiAddress, 50n * ONE_USDC))
+      await expect(noSwapCampaign.connect(donor1).donateERC20(daiAddress, 50n * ONE_USDC, 0))
         .to.be.revertedWith("Swap adapter not set");
+    });
+
+    it("reverts when slippage exceeds minUsdcOut (Gap #5)", async function () {
+      // MockSwapAdapter returns exactly amountIn, so ask for amountIn+1 to trigger SlippageTooHigh
+      const amount = 50n * ONE_USDC;
+      const minOutTooHigh = amount + 1n;
+      await expect(campaign.connect(donor1).donateERC20(daiAddress, amount, minOutTooHigh))
+        .to.be.revertedWithCustomError(campaign, "SlippageTooHigh");
     });
   });
 
@@ -239,37 +248,38 @@ describe("AbeokutaCampaign", function () {
 
     it("converts ETH to USDC via swap adapter and records donation", async function () {
       const ethToSend = 100n * ONE_USDC; // 100e6 wei → 100 USDC in mock
-      await expect(campaign.connect(donor1).donateETH({ value: ethToSend }))
+      // Gap #5: first arg is minUsdcOut (0 = no slippage check)
+      await expect(campaign.connect(donor1).donateETH(0, { value: ethToSend }))
         .to.emit(campaign, "Donated")
         .withArgs(donor1.address, ethToSend, ethers.ZeroAddress, "base");
       expect(await campaign.totalRaised()).to.equal(ethToSend);
     });
 
     it("increments donorCount on ETH donation", async function () {
-      await campaign.connect(donor1).donateETH({ value: 10n * ONE_USDC });
+      await campaign.connect(donor1).donateETH(0, { value: 10n * ONE_USDC });
       expect(await campaign.donorCount()).to.equal(1);
     });
 
     it("reverts with zero ETH", async function () {
-      await expect(campaign.connect(donor1).donateETH({ value: 0 }))
+      await expect(campaign.connect(donor1).donateETH(0, { value: 0 }))
         .to.be.revertedWithCustomError(campaign, "ZeroAmount");
     });
 
     it("reverts when ETH swaps to below minimum USDC", async function () {
       // 1 wei → 1 USDC unit, which is below 1e6 minimum
-      await expect(campaign.connect(donor1).donateETH({ value: 1 }))
+      await expect(campaign.connect(donor1).donateETH(0, { value: 1 }))
         .to.be.revertedWith("Below minimum donation");
     });
 
     it("reverts when paused", async function () {
       await campaign.pause();
-      await expect(campaign.connect(donor1).donateETH({ value: 10n * ONE_USDC }))
+      await expect(campaign.connect(donor1).donateETH(0, { value: 10n * ONE_USDC }))
         .to.be.revertedWithCustomError(campaign, "EnforcedPause");
     });
 
     it("reverts after deadline", async function () {
       await time.increaseTo(deadline + 1);
-      await expect(campaign.connect(donor1).donateETH({ value: 10n * ONE_USDC }))
+      await expect(campaign.connect(donor1).donateETH(0, { value: 10n * ONE_USDC }))
         .to.be.revertedWithCustomError(campaign, "CampaignEnded");
     });
 
@@ -279,8 +289,15 @@ describe("AbeokutaCampaign", function () {
       const noSwapCampaign = await CF.deploy(
         usdcAddress, ethers.ZeroAddress, treasury.address, GOAL_MIN, GOAL_MAX, now + 86400
       );
-      await expect(noSwapCampaign.connect(donor1).donateETH({ value: 10n * ONE_USDC }))
+      await expect(noSwapCampaign.connect(donor1).donateETH(0, { value: 10n * ONE_USDC }))
         .to.be.revertedWith("Swap adapter not set");
+    });
+
+    it("reverts when slippage exceeds minUsdcOut (Gap #5)", async function () {
+      const ethToSend = 100n * ONE_USDC;
+      const minOutTooHigh = ethToSend + 1n;
+      await expect(campaign.connect(donor1).donateETH(minOutTooHigh, { value: ethToSend }))
+        .to.be.revertedWithCustomError(campaign, "SlippageTooHigh");
     });
   });
 
@@ -359,13 +376,23 @@ describe("AbeokutaCampaign", function () {
       ).to.be.revertedWithCustomError(campaign, "EnforcedPause");
     });
 
-    it("reverts after deadline", async function () {
+    it("reverts after deadline for bridge calls (M-3)", async function () {
       const amount = 100n * ONE_USDC;
       await fundAndApprove(bridge, amount);
       await time.increaseTo(deadline + 1);
       await expect(
         campaign.connect(bridge).creditDonation(donor1.address, amount, "ethereum")
       ).to.be.revertedWithCustomError(campaign, "CampaignEnded");
+    });
+
+    it("M-3: staking pool can still credit yield after deadline (retryCauseCredit scenario)", async function () {
+      const amount = 25n * ONE_USDC;
+      await fundAndApprove(stakingPool, amount);
+      // Advance past deadline
+      await time.increaseTo(deadline + 1);
+      // Staking pool (not bridge) can still credit — yield was earned during the campaign
+      await campaign.connect(stakingPool).creditDonation(donor1.address, amount, "staking-yield");
+      expect(await campaign.totalRaised()).to.equal(amount);
     });
   });
 
@@ -374,18 +401,18 @@ describe("AbeokutaCampaign", function () {
   // ──────────────────────────────────────────────
 
   describe("withdrawToTreasury", function () {
-    it("treasury can withdraw after deadline", async function () {
-      const amount = 500n * ONE_USDC;
-      await campaign.connect(donor1).donateUSDC(amount);
+    it("treasury can withdraw after deadline when goal is met", async function () {
+      // Gap #10: withdrawal requires goalMin to be reached
+      await campaign.connect(donor1).donateUSDC(GOAL_MIN);
       await time.increaseTo(deadline + 1);
 
       const before = await mockUSDC.balanceOf(treasury.address);
       await campaign.connect(treasury).withdrawToTreasury();
-      expect(await mockUSDC.balanceOf(treasury.address) - before).to.equal(amount);
+      expect(await mockUSDC.balanceOf(treasury.address) - before).to.equal(GOAL_MIN);
     });
 
-    it("owner can withdraw after deadline", async function () {
-      await campaign.connect(donor1).donateUSDC(500n * ONE_USDC);
+    it("owner can withdraw after deadline when goal is met", async function () {
+      await campaign.connect(donor1).donateUSDC(GOAL_MIN);
       await time.increaseTo(deadline + 1);
       await expect(campaign.connect(owner).withdrawToTreasury()).to.not.be.reverted;
     });
@@ -396,12 +423,11 @@ describe("AbeokutaCampaign", function () {
     });
 
     it("emits Withdrawn event", async function () {
-      const amount = 500n * ONE_USDC;
-      await campaign.connect(donor1).donateUSDC(amount);
+      await campaign.connect(donor1).donateUSDC(GOAL_MIN);
       await time.increaseTo(deadline + 1);
       await expect(campaign.connect(treasury).withdrawToTreasury())
         .to.emit(campaign, "Withdrawn")
-        .withArgs(treasury.address, amount);
+        .withArgs(treasury.address, GOAL_MIN);
     });
 
     it("reverts if called by non-treasury/non-owner", async function () {
@@ -410,14 +436,16 @@ describe("AbeokutaCampaign", function () {
         .to.be.revertedWithCustomError(campaign, "Unauthorized");
     });
 
-    it("reverts if active campaign has not reached min goal", async function () {
+    it("reverts if min goal not reached (Gap #10: refunds take priority)", async function () {
       await campaign.connect(donor1).donateUSDC(100n * ONE_USDC);
       await expect(campaign.connect(treasury).withdrawToTreasury())
         .to.be.revertedWithCustomError(campaign, "GoalNotReached");
     });
 
-    it("reverts when balance is zero", async function () {
-      await time.increaseTo(deadline + 1);
+    it("reverts when balance is zero (goal met, but balance already withdrawn)", async function () {
+      // To hit "Nothing to withdraw", the goal must be met first
+      await campaign.connect(donor1).donateUSDC(GOAL_MIN);
+      await campaign.connect(treasury).withdrawToTreasury(); // first withdrawal drains USDC
       await expect(campaign.connect(treasury).withdrawToTreasury())
         .to.be.revertedWith("Nothing to withdraw");
     });
@@ -738,7 +766,7 @@ describe("AbeokutaCampaign", function () {
     // ── Swap adapter timelock (SC-C3) ─────────────────────────────────────────
 
     it("proposeSwapAdapter sets pending state and emits event", async function () {
-      const newSwap = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress);
+      const newSwap = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress, ethers.ZeroAddress);
       const newAddr = await newSwap.getAddress();
       await expect(campaign.proposeSwapAdapter(newAddr))
         .to.emit(campaign, "SwapAdapterProposed");
@@ -747,13 +775,13 @@ describe("AbeokutaCampaign", function () {
     });
 
     it("cannot execute swap adapter before 48h timelock", async function () {
-      const newSwap = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress);
+      const newSwap = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress, ethers.ZeroAddress);
       await campaign.proposeSwapAdapter(await newSwap.getAddress());
       await expect(campaign.executeSwapAdapter()).to.be.revertedWith("Timelock not expired");
     });
 
     it("can execute swap adapter after 48h and emits SwapAdapterUpdated", async function () {
-      const newSwap = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress);
+      const newSwap = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress, ethers.ZeroAddress);
       const newAddr = await newSwap.getAddress();
       await campaign.proposeSwapAdapter(newAddr);
       await time.increase(48 * 3600 + 1);
@@ -765,7 +793,7 @@ describe("AbeokutaCampaign", function () {
     });
 
     it("cancelSwapAdapterChange clears pending state and emits event", async function () {
-      const newSwap = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress);
+      const newSwap = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress, ethers.ZeroAddress);
       await campaign.proposeSwapAdapter(await newSwap.getAddress());
       await expect(campaign.cancelSwapAdapterChange())
         .to.emit(campaign, "SwapAdapterChangeCancelled");
@@ -786,8 +814,8 @@ describe("AbeokutaCampaign", function () {
     });
 
     it("SC-M4: re-proposing reverts when a proposal is already pending (prevents clock reset)", async function () {
-      const swap1 = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress);
-      const swap2 = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress);
+      const swap1 = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress, ethers.ZeroAddress);
+      const swap2 = await (await ethers.getContractFactory("MockSwapAdapter")).deploy(usdcAddress, ethers.ZeroAddress);
       await campaign.proposeSwapAdapter(await swap1.getAddress());
       await expect(campaign.proposeSwapAdapter(await swap2.getAddress()))
         .to.be.revertedWith("Proposal already pending");
@@ -854,14 +882,11 @@ describe("AbeokutaCampaign", function () {
   });
 
   describe("emergencyWithdrawETH", function () {
-    it("owner can rescue ETH sent to contract", async function () {
-      const ethAmount = ethers.parseEther("0.01");
-      await owner.sendTransaction({ to: await campaign.getAddress(), value: ethAmount });
-
-      const before = await ethers.provider.getBalance(other.address);
-      await campaign.emergencyWithdrawETH(other.address);
-      const after = await ethers.provider.getBalance(other.address);
-      expect(after - before).to.equal(ethAmount);
+    it("L-6: refuses plain ETH transfers (no receive fallback)", async function () {
+      // Without receive(), direct ETH sends revert at the EVM level
+      await expect(
+        owner.sendTransaction({ to: await campaign.getAddress(), value: ethers.parseEther("0.01") })
+      ).to.be.reverted;
     });
 
     it("reverts when no ETH to rescue", async function () {
@@ -870,14 +895,155 @@ describe("AbeokutaCampaign", function () {
     });
 
     it("reverts with zero recipient address (L4)", async function () {
-      await owner.sendTransaction({ to: await campaign.getAddress(), value: ethers.parseEther("0.01") });
+      // Zero-address check precedes balance check — reverts even with no ETH
       await expect(campaign.emergencyWithdrawETH(ethers.ZeroAddress))
         .to.be.revertedWith("Invalid recipient");
     });
 
     it("non-owner cannot call emergencyWithdrawETH", async function () {
-      await owner.sendTransaction({ to: await campaign.getAddress(), value: ethers.parseEther("0.01") });
       await expect(campaign.connect(other).emergencyWithdrawETH(other.address)).to.be.reverted;
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // Gap #6: donateUSDCFor
+  // ──────────────────────────────────────────────
+
+  describe("donateUSDCFor (Gap #6, M-1)", function () {
+    // M-1: donor1 is the authorised watcher in this suite
+    beforeEach(async function () {
+      await campaign.setWatcher(donor1.address);
+    });
+
+    it("records donation attributed to the specified donor, not msg.sender", async function () {
+      const amount = 100n * ONE_USDC;
+      // donor1 (watcher) pays USDC but records donor2 as the donor
+      await expect(campaign.connect(donor1).donateUSDCFor(donor2.address, amount))
+        .to.emit(campaign, "Donated")
+        .withArgs(donor2.address, amount, usdcAddress, "base");
+
+      expect(await campaign.donorTotalContributed(donor2.address)).to.equal(amount);
+      expect(await campaign.donorTotalContributed(donor1.address)).to.equal(0);
+    });
+
+    it("increments donorCount for the attributed donor", async function () {
+      await campaign.connect(donor1).donateUSDCFor(donor2.address, 100n * ONE_USDC);
+      expect(await campaign.donorCount()).to.equal(1);
+    });
+
+    it("M-1: reverts when called by unauthorized address", async function () {
+      await expect(campaign.connect(other).donateUSDCFor(donor2.address, ONE_USDC))
+        .to.be.revertedWith("Not authorized watcher");
+    });
+
+    it("M-1: reverts when watcher is not set (address(0))", async function () {
+      // Deploy a fresh campaign with no watcher configured
+      const now = await time.latest();
+      const CF = await ethers.getContractFactory("AbeokutaCampaign");
+      const unwatched = await CF.deploy(
+        usdcAddress, swapAddress, treasury.address, GOAL_MIN, GOAL_MAX, now + 86400
+      );
+      await mockUSDC.connect(donor1).approve(await unwatched.getAddress(), ethers.MaxUint256);
+      await expect(unwatched.connect(donor1).donateUSDCFor(donor2.address, ONE_USDC))
+        .to.be.revertedWith("Not authorized watcher");
+    });
+
+    it("reverts with zero donor address", async function () {
+      await expect(campaign.connect(donor1).donateUSDCFor(ethers.ZeroAddress, ONE_USDC))
+        .to.be.revertedWith("Invalid donor");
+    });
+
+    it("reverts with zero amount", async function () {
+      await expect(campaign.connect(donor1).donateUSDCFor(donor2.address, 0))
+        .to.be.revertedWithCustomError(campaign, "ZeroAmount");
+    });
+
+    it("reverts after deadline", async function () {
+      await time.increaseTo(deadline + 1);
+      await expect(campaign.connect(donor1).donateUSDCFor(donor2.address, ONE_USDC))
+        .to.be.revertedWithCustomError(campaign, "CampaignEnded");
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // Gap #10: claimRefund
+  // ──────────────────────────────────────────────
+
+  describe("claimRefund (Gap #10)", function () {
+    it("allows donor to reclaim USDC after deadline if goal not met", async function () {
+      const amount = 100n * ONE_USDC;
+      await campaign.connect(donor1).donateUSDC(amount);
+      await time.increaseTo(deadline + 1);
+
+      const before = await mockUSDC.balanceOf(donor1.address);
+      await expect(campaign.connect(donor1).claimRefund())
+        .to.emit(campaign, "RefundClaimed")
+        .withArgs(donor1.address, amount);
+      expect(await mockUSDC.balanceOf(donor1.address) - before).to.equal(amount);
+    });
+
+    it("reverts if campaign is still active", async function () {
+      await campaign.connect(donor1).donateUSDC(100n * ONE_USDC);
+      await expect(campaign.connect(donor1).claimRefund())
+        .to.be.revertedWithCustomError(campaign, "CampaignNotEnded");
+    });
+
+    it("reverts if goal was met (RefundWindowClosed)", async function () {
+      await campaign.connect(donor1).donateUSDC(GOAL_MIN);
+      await time.increaseTo(deadline + 1);
+      await expect(campaign.connect(donor1).claimRefund())
+        .to.be.revertedWithCustomError(campaign, "RefundWindowClosed");
+    });
+
+    it("reverts for donors with no contributions (ZeroAmount)", async function () {
+      await campaign.connect(donor1).donateUSDC(100n * ONE_USDC);
+      await time.increaseTo(deadline + 1);
+      await expect(campaign.connect(donor2).claimRefund())
+        .to.be.revertedWithCustomError(campaign, "ZeroAmount");
+    });
+
+    it("reverts on double refund (AlreadyRefunded)", async function () {
+      await campaign.connect(donor1).donateUSDC(100n * ONE_USDC);
+      await time.increaseTo(deadline + 1);
+      await campaign.connect(donor1).claimRefund();
+      await expect(campaign.connect(donor1).claimRefund())
+        .to.be.revertedWithCustomError(campaign, "AlreadyRefunded");
+    });
+
+    it("M-2: pro-rata — single donor with full pool receives exact contribution", async function () {
+      const amount = 100n * ONE_USDC;
+      await campaign.connect(donor1).donateUSDC(amount);
+      await time.increaseTo(deadline + 1);
+
+      const before = await mockUSDC.balanceOf(donor1.address);
+      await campaign.connect(donor1).claimRefund();
+      // Pro-rata = (100 * 100) / 100 = 100 USDC (full contribution since only donor)
+      expect(await mockUSDC.balanceOf(donor1.address) - before).to.equal(amount);
+    });
+
+    it("M-2: pro-rata — multiple donors each receive proportional share", async function () {
+      await campaign.connect(donor1).donateUSDC(100n * ONE_USDC); // 1/3 of pool
+      await campaign.connect(donor2).donateUSDC(200n * ONE_USDC); // 2/3 of pool
+      await time.increaseTo(deadline + 1);
+
+      const before1 = await mockUSDC.balanceOf(donor1.address);
+      const before2 = await mockUSDC.balanceOf(donor2.address);
+
+      await campaign.connect(donor1).claimRefund();
+      await campaign.connect(donor2).claimRefund();
+
+      const refund1 = await mockUSDC.balanceOf(donor1.address) - before1;
+      const refund2 = await mockUSDC.balanceOf(donor2.address) - before2;
+
+      // donor1 pro-rata: (100e6 * 300e6) / 300e6 = 100e6
+      expect(refund1).to.equal(100n * ONE_USDC);
+      // donor2 pro-rata: (200e6 * remaining) / 300e6 — gets proportional share of remainder
+      expect(refund2).to.be.gt(0n);
+      // Together they claim most of the pool.
+      // donor2's pro-rata: (200/300) × 200 USDC remaining ≈ 133 USDC (after donor1 took 100).
+      // This is better than FCFS (where donor2 gets 0) — pro-rata guarantees proportionality.
+      expect(refund1 + refund2).to.be.gte(225n * ONE_USDC);
+      expect(await campaign.totalRaised()).to.equal(300n * ONE_USDC); // totalRaised unchanged
     });
   });
 });

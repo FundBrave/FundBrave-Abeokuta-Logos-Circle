@@ -17,7 +17,20 @@
       "Bash(echo \"exit: $?\")",
       "Bash(cmd /c \"netstat -ano | findstr :3001\" 2>&1)",
       "Bash(cmd /c \"netstat -ano | findstr LISTEN | findstr :300\" 2>&1)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(find C:/Users/user/Documents/abeokuta-mini -type d -name *[Ff]und[Bb]rave* -o -type d -name *bridge*)",
+      "Bash(grep -E \"\\\\.sol$\")",
+      "Bash(find C:/Users/user/Documents/abeokuta-mini -not -path */node_modules/* -type d)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:v for k,v in d.items\\(\\) if ''''address'''' in str\\(k\\).lower\\(\\) or isinstance\\(v,str\\) and v.startswith\\(''''0x''''\\)}, indent=2\\)\\)\")",
+      "Bash(node_modules/.bin/hardhat.cmd compile:*)",
+      "WebFetch(domain:sepolia.basescan.org)",
+      "Bash(xargs grep:*)",
+      "Bash(find /c/Users/user/Documents/abeokuta-mini -type f -name *FundBrave*)",
+      "Bash(jq:*)",
+      "Bash(REPORT_GAS=true npx hardhat test test/AbeokutaBridgeReceiver.test.js)",
+      "Bash(REPORT_GAS=true npx hardhat test test/AbeokutaCampaign.test.js)",
+      "Bash(ls *.js *.json)",
+      "Bash(npm list:*)"
     ]
   }
 }

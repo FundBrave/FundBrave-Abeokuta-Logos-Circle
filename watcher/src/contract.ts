@@ -17,6 +17,8 @@ import {
   parseAbi,
   maxUint256,
   formatUnits,
+  keccak256,
+  toBytes,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base, baseSepolia } from "viem/chains";
@@ -49,6 +51,13 @@ const ERC20_ABI = parseAbi([
 
 const CAMPAIGN_ABI = parseAbi([
   "function donateUSDC(uint256 amount) external",
+  // Gap #6: attribute donation to the actual BTC/SOL sender instead of float wallet
+  "function donateUSDCFor(address donor, uint256 amount) external",
+]);
+
+const STAKING_ABI = parseAbi([
+  // Gap #1: callable by anyone — watcher calls this on a daily schedule
+  "function harvestAndDistribute() external",
 ]);
 
 // W-C1: ABI fragment for the Donated event emitted after a successful donateUSDC call.
@@ -103,6 +112,22 @@ async function ensureApproval(): Promise<void> {
     throw new Error("USDC approval transaction reverted on-chain");
   }
   logger.info("[contract] Approval confirmed", { hash });
+}
+
+// ── Gap #6: Deterministic donor address derivation ────────────────────────────
+
+/**
+ * Derives a deterministic, unique EVM pseudo-address for a BTC or SOL sender.
+ *
+ * Since BTC/SOL addresses are not EVM addresses, we hash the chain-prefixed
+ * sender string to produce a 20-byte address that is unique per sender and
+ * consistent across multiple transactions from the same sender.
+ *
+ * Example: "btc:1A1zP1..." → keccak256 → last 20 bytes → 0x...
+ */
+export function deriveDonorAddress(chain: "btc" | "sol", senderAddr: string): `0x${string}` {
+  const hash = keccak256(toBytes(`${chain}:${senderAddr}`));
+  return `0x${hash.slice(-40)}` as `0x${string}`;
 }
 
 // ── Float wallet balance check ─────────────────────────────────────────────────
@@ -165,11 +190,15 @@ export async function checkRecentDonation(startedAtMs: number): Promise<boolean>
  * @param usdValueFloat  USD value of the deposit (e.g. 0.015 BTC × $60,000 = $900)
  * @param source         Label for logging ("btc" | "sol")
  * @param txRef          Original chain tx hash/signature for logging
+ * @param donor          Gap #6: Derived EVM address for the actual sender (optional).
+ *                       If provided, uses donateUSDCFor() to attribute the donation correctly.
+ *                       If omitted, falls back to donateUSDC() (float wallet is donor).
  */
 export async function donateToCampaign(
   usdValueFloat: number,
   source: "btc" | "sol",
-  txRef: string
+  txRef: string,
+  donor?: `0x${string}`
 ): Promise<string> {
   return enqueueTx(async () => {
     // Convert USD to USDC 6-decimal units
@@ -189,21 +218,65 @@ export async function donateToCampaign(
     await ensureApproval();
 
     logger.info(
-      `[contract] Donating ${formatUnits(usdcAmount, 6)} USDC on behalf of ${source} tx ${txRef}`
+      `[contract] Donating ${formatUnits(usdcAmount, 6)} USDC on behalf of ${source} tx ${txRef}` +
+      (donor ? ` (donor: ${donor})` : " (float wallet as donor)")
     );
 
-    const hash = await walletClient.writeContract({
-      address: config.campaignAddress,
-      abi: CAMPAIGN_ABI,
-      functionName: "donateUSDC",
-      args: [usdcAmount],
-    });
+    // Gap #6: Use donateUSDCFor when we have a derived donor address
+    const hash = donor
+      ? await walletClient.writeContract({
+          address: config.campaignAddress,
+          abi: CAMPAIGN_ABI,
+          functionName: "donateUSDCFor",
+          args: [donor, usdcAmount],
+        })
+      : await walletClient.writeContract({
+          address: config.campaignAddress,
+          abi: CAMPAIGN_ABI,
+          functionName: "donateUSDC",
+          args: [usdcAmount],
+        });
 
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") {
       throw new Error(`Donation transaction reverted on-chain: ${hash}`);
     }
     logger.info(`[contract] Donation confirmed`, { hash, source, txRef });
+    return hash;
+  });
+}
+
+// ── Gap #1: Harvest automation ────────────────────────────────────────────────
+
+/**
+ * Gap #1: Call harvestAndDistribute() on the staking contract.
+ *
+ * This pulls accrued Aave yield, deducts the 2% platform fee, and accumulates
+ * the remainder in the per-token accumulator for stakers to claim.
+ * The contract itself enforces MIN_HARVEST_INTERVAL (1 hour), so calling more
+ * frequently is safe — it will no-op if called too soon.
+ */
+export async function harvestStaking(): Promise<string | null> {
+  if (!config.stakingAddress) {
+    logger.info("[harvest] STAKING_ADDRESS not configured — skipping harvest");
+    return null;
+  }
+
+  return enqueueTx(async () => {
+    logger.info("[harvest] Calling harvestAndDistribute()...");
+
+    const hash = await walletClient.writeContract({
+      address: config.stakingAddress as `0x${string}`,
+      abi: STAKING_ABI,
+      functionName: "harvestAndDistribute",
+      args: [],
+    });
+
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") {
+      throw new Error(`harvestAndDistribute reverted: ${hash}`);
+    }
+    logger.info("[harvest] harvestAndDistribute confirmed", { hash });
     return hash;
   });
 }

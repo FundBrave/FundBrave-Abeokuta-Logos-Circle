@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, useSwitchChain } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import Link from "next/link";
 import {
@@ -14,11 +14,14 @@ import {
   SlidersHorizontal,
   Check,
   ChevronDown,
+  RefreshCw,
+  Clock,
+  Bell,
 } from "lucide-react";
 import { useStaking } from "../hooks/useStaking";
 import { useCampaignStats } from "../hooks/useCampaignStats";
 import { FundBraveLogo } from "../components/FundBraveLogo";
-import { getExplorerUrl, formatUSDC, STAKE_PRESETS } from "../lib/contracts";
+import { getExplorerUrl, formatUSDC, STAKE_PRESETS, TARGET_CHAIN, TARGET_CHAIN_ID } from "../lib/contracts";
 
 // ─── Split configurator sub-component ────────────────────────────────────────
 
@@ -189,7 +192,9 @@ function SplitConfigurator({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function StakePage() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, chain } = useAccount();
+  const { switchChain, isPending: isSwitching } = useSwitchChain();
+  const isOnWrongChain = isConnected && !!chain && chain.id !== (TARGET_CHAIN_ID as number);
   const stats   = useCampaignStats();
   const staking = useStaking();
 
@@ -227,6 +232,18 @@ export default function StakePage() {
   };
 
   const isSuccess = staking.step === "success";
+
+  // Deadline banner logic
+  const deadlineSec   = Number(stats.deadline);          // 0 if not loaded
+  const nowSec        = Math.floor(Date.now() / 1000);
+  const daysLeft      = deadlineSec > 0 ? Math.max(0, Math.ceil((deadlineSec - nowSec) / 86400)) : null;
+  const hasYield      = staking.pendingYield > 0n || staking.pendingCause > 0n;
+  const deadlineUrgency =
+    daysLeft === null            ? null :
+    daysLeft <= 3                ? "critical" :
+    daysLeft <= 7                ? "urgent" :
+    daysLeft <= 30               ? "warning" :
+                                   "notice";
 
   return (
     <div className="min-h-screen bg-[#0A0E1A]">
@@ -277,27 +294,152 @@ export default function StakePage() {
           </div>
         )}
 
-        {/* Claim yield button */}
-        {isConnected && (staking.pendingYield > 0n || staking.pendingCause > 0n) && (
-          <div className="bg-[#111827] border border-white/10 rounded-2xl p-4 mb-6 flex items-center justify-between">
+        {/* Deadline / yield-claim reminder banner */}
+        {isConnected && staking.stakerPrincipal > 0n && deadlineUrgency && (
+          <div className={`rounded-2xl p-4 mb-6 flex items-start gap-3 border ${
+            deadlineUrgency === "critical"
+              ? "bg-red-500/10 border-red-500/30"
+              : deadlineUrgency === "urgent"
+              ? "bg-amber-500/10 border-amber-500/30"
+              : deadlineUrgency === "warning"
+              ? "bg-amber-500/10 border-amber-500/20"
+              : "bg-[#2563EB]/10 border-[#2563EB]/20"
+          }`}>
+            <Bell className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
+              deadlineUrgency === "critical" ? "text-red-400" :
+              deadlineUrgency === "urgent"   ? "text-amber-400" :
+              deadlineUrgency === "warning"  ? "text-amber-400" :
+              "text-[#2563EB]"
+            }`} />
             <div>
-              <div className="text-white font-medium text-sm">Ready to claim</div>
+              {deadlineUrgency === "critical" && (
+                <>
+                  <p className="text-red-400 font-semibold text-sm">
+                    {daysLeft === 0 ? "Campaign ends today!" : `${daysLeft} day${daysLeft === 1 ? "" : "s"} left — claim now!`}
+                  </p>
+                  <p className="text-white/60 text-xs mt-0.5">
+                    Yield not claimed before the deadline is lost. Claim or compound immediately.
+                  </p>
+                </>
+              )}
+              {deadlineUrgency === "urgent" && (
+                <>
+                  <p className="text-amber-400 font-semibold text-sm">
+                    {daysLeft} days until campaign ends
+                  </p>
+                  <p className="text-white/60 text-xs mt-0.5">
+                    {hasYield
+                      ? "You have unclaimed yield — claim it before the deadline so your contribution reaches the campaign."
+                      : "Remember to claim any yield you earn before the campaign deadline."}
+                  </p>
+                </>
+              )}
+              {deadlineUrgency === "warning" && (
+                <>
+                  <p className="text-amber-300 font-medium text-sm">
+                    {daysLeft} days remaining
+                  </p>
+                  <p className="text-white/60 text-xs mt-0.5">
+                    Yield is only credited to the campaign when you claim or compound. Don&apos;t forget before the deadline.
+                  </p>
+                </>
+              )}
+              {deadlineUrgency === "notice" && (
+                <p className="text-[#2563EB] text-sm">
+                  Your yield must be claimed or compounded before the campaign ends ({daysLeft} days away) to reach the campaign.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Claim / Compound yield — always visible when staked so buttons are discoverable */}
+        {isConnected && staking.stakerPrincipal > 0n && (
+          <div className="bg-[#111827] border border-white/10 rounded-2xl p-4 mb-6 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-white font-medium text-sm">
+                {hasYield ? "Ready to claim" : "Yield"}
+              </div>
               <div className="text-xs mt-0.5 space-y-0.5">
-                <span className="text-green-400">${staking.pendingYieldFormatted} to you</span>
-                <span className="text-white/30"> · </span>
-                <span className="text-[#2563EB]">${staking.pendingCauseFormatted} to campaign</span>
+                {hasYield ? (
+                  <>
+                    <span className="text-green-400">${staking.pendingYieldFormatted} to you</span>
+                    <span className="text-white/30"> · </span>
+                    <span className="text-[#2563EB]">${staking.pendingCauseFormatted} to campaign</span>
+                  </>
+                ) : (
+                  <span className="text-white/40">Yield accrues as Aave earns interest · harvested daily</span>
+                )}
               </div>
             </div>
-            <button
-              onClick={staking.claimYield}
-              disabled={staking.isProcessing}
-              className="border border-[#2563EB] bg-white/5 hover:bg-white/10 text-[#2563EB] font-medium py-2 px-3 rounded-xl transition-colors text-sm cursor-pointer min-h-10"
-              aria-label="Claim yield"
-            >
-              {staking.isProcessing && staking.step === "claiming" ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : "Claim"}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={staking.compoundYield}
+                disabled={staking.isProcessing || !hasYield}
+                title="Re-stake your yield portion to compound returns"
+                className="border border-green-500/50 bg-green-500/10 hover:bg-green-500/20 disabled:opacity-30 disabled:cursor-not-allowed text-green-400 font-medium py-2 px-3 rounded-xl transition-colors text-sm cursor-pointer min-h-10"
+                aria-label="Compound yield"
+              >
+                {staking.isProcessing && staking.step === "compounding" ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : <RefreshCw className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={staking.claimYield}
+                disabled={staking.isProcessing || !hasYield}
+                className="border border-[#2563EB] bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed text-[#2563EB] font-medium py-2 px-3 rounded-xl transition-colors text-sm cursor-pointer min-h-10"
+                aria-label="Claim yield"
+              >
+                {staking.isProcessing && staking.step === "claiming" ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : "Claim"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* SC-C1: Escrowed cause yield panel */}
+        {isConnected && staking.escapedCauseYield > 0n && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 mb-6">
+            <div className="flex items-start gap-3">
+              <Clock className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="text-amber-300 text-sm font-medium">
+                  ${staking.escapedCauseFormatted} cause yield escrowed
+                </div>
+                <div className="text-amber-300/60 text-xs mt-0.5">
+                  The campaign was unavailable when you last claimed. This yield is held
+                  safely and can be sent to the campaign once it resumes.
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={staking.retryCauseCredit}
+                    disabled={staking.isProcessing}
+                    className="flex items-center gap-1.5 text-xs bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 px-3 py-2 rounded-xl transition-colors cursor-pointer disabled:opacity-40"
+                    aria-label="Retry sending escrowed yield to campaign"
+                  >
+                    {staking.isProcessing && staking.step === "retrying" ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : <RefreshCw className="w-3 h-3" />}
+                    Retry to campaign
+                  </button>
+
+                  {staking.canRescue && (
+                    <button
+                      onClick={staking.rescueEscrowedCause}
+                      disabled={staking.isProcessing}
+                      className="flex items-center gap-1.5 text-xs bg-white/5 hover:bg-white/10 border border-white/20 text-white/60 px-3 py-2 rounded-xl transition-colors cursor-pointer disabled:opacity-40"
+                      aria-label="Rescue escrowed yield to your wallet (30-day window)"
+                    >
+                      {staking.isProcessing && staking.step === "rescuing" ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : null}
+                      Rescue to wallet
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -308,6 +450,20 @@ export default function StakePage() {
             <div className="flex justify-center">
               <ConnectButton />
             </div>
+          </div>
+        ) : isOnWrongChain ? (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-6 text-center">
+            <p className="text-amber-400 font-medium mb-1">Wrong network</p>
+            <p className="text-white/50 text-sm mb-4">
+              Staking requires {TARGET_CHAIN.name}. Your wallet is on {chain?.name ?? "an unknown network"}.
+            </p>
+            <button
+              onClick={() => switchChain({ chainId: TARGET_CHAIN_ID as number })}
+              disabled={isSwitching}
+              className="bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black font-medium py-2 px-6 rounded-xl transition-colors cursor-pointer"
+            >
+              {isSwitching ? "Switching…" : `Switch to ${TARGET_CHAIN.name}`}
+            </button>
           </div>
         ) : (
           <>
@@ -363,15 +519,13 @@ export default function StakePage() {
               </div>
 
               {tab === "stake" && parsedAmount > 0n && (
-                <div className="mt-2 text-xs text-white/40 flex gap-3">
-                  <span>
-                    ~{staking.causeSharePct} (
-                    {formatUSDC((parsedAmount * staking.causeShareBps) / 10000n)} USDC) → campaign
-                  </span>
-                  <span>
-                    ~{staking.stakerSharePct} (
-                    {formatUSDC((parsedAmount * staking.stakerShareBps) / 10000n)} USDC) → you
-                  </span>
+                <div className="mt-2 text-xs text-white/40">
+                  Your principal is returned in full when you unstake.
+                  Yield earned will split: <span className="text-[#2563EB]">{staking.causeSharePct} → campaign</span>
+                  {" · "}
+                  <span className="text-green-400">{staking.stakerSharePct} → you</span>
+                  {" · "}
+                  <span>2% platform</span>
                 </div>
               )}
 
@@ -414,11 +568,11 @@ export default function StakePage() {
                 <Loader2 className="w-5 h-5 text-[#2563EB] animate-spin" />
                 <div>
                   <div className="text-white text-sm font-medium">Step 2/2: Staking…</div>
-                  <div className="text-white/50 text-xs">Confirm in your wallet</div>
+                  <div className="text-white/50 text-xs">A wallet prompt will appear shortly</div>
                 </div>
               </div>
             )}
-            {(staking.step === "confirming" || staking.step === "unstaking" || staking.step === "claiming") && (
+            {(staking.step === "confirming" || staking.step === "unstaking" || staking.step === "claiming" || staking.step === "compounding" || staking.step === "retrying" || staking.step === "rescuing") && (
               <div className="bg-[#2563EB]/10 border border-[#2563EB]/30 rounded-2xl p-4 mb-4 flex items-center gap-3">
                 <Loader2 className="w-5 h-5 text-[#2563EB] animate-spin" />
                 <div className="text-white text-sm font-medium">Confirming on chain…</div>
@@ -476,6 +630,45 @@ export default function StakePage() {
             <p className="text-center text-white/30 text-xs mt-4">
               Staked USDC earns ~3–5% APY via Aave V3. Unstake any time.
             </p>
+
+            {/* How to withdraw — shown once the user has an active stake */}
+            {staking.stakerPrincipal > 0n && (
+              <div className="mt-6 bg-[#111827] border border-white/10 rounded-2xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Info className="w-4 h-4 text-white/40" />
+                  <span className="text-sm font-medium text-white/70">How to withdraw</span>
+                </div>
+                <ol className="space-y-3">
+                  <li className="flex gap-3">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#2563EB]/20 text-[#2563EB] text-xs flex items-center justify-center font-bold">1</span>
+                    <div>
+                      <p className="text-white/80 text-sm font-medium">Get your principal back</p>
+                      <p className="text-white/40 text-xs mt-0.5">
+                        Switch to the <strong className="text-white/60">Unstake</strong> tab above, enter the amount you want to withdraw, and confirm the transaction. Your USDC returns to your wallet immediately — no waiting period.
+                      </p>
+                    </div>
+                  </li>
+                  <li className="flex gap-3">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-green-500/20 text-green-400 text-xs flex items-center justify-center font-bold">2</span>
+                    <div>
+                      <p className="text-white/80 text-sm font-medium">Claim your yield</p>
+                      <p className="text-white/40 text-xs mt-0.5">
+                        Once yield accrues, use the <strong className="text-white/60">Claim</strong> button in the Yield panel above. Your share goes straight to your wallet; the campaign&apos;s share is credited automatically. Or use <strong className="text-white/60">Compound</strong> to re-stake your portion for more yield.
+                      </p>
+                    </div>
+                  </li>
+                  <li className="flex gap-3">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-white/10 text-white/40 text-xs flex items-center justify-center font-bold">!</span>
+                    <div>
+                      <p className="text-white/80 text-sm font-medium">Claim before the deadline</p>
+                      <p className="text-white/40 text-xs mt-0.5">
+                        Yield is only sent to the campaign when you claim or compound. If you don&apos;t claim before the campaign ends, your yield portion won&apos;t reach the campaign.
+                      </p>
+                    </div>
+                  </li>
+                </ol>
+              </div>
+            )}
           </>
         )}
       </div>
