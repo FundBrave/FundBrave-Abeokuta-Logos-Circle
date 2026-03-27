@@ -70,8 +70,8 @@ export const MANUAL_DONATION_ADDRESSES = {
 
 // ─── Campaign parameters ─────────────────────────────────────────────────────
 
-export const CAMPAIGN_GOAL_MIN_USDC = 1_000;  // $1,000
-export const CAMPAIGN_GOAL_MAX_USDC = 2_500;  // $2,500
+export const CAMPAIGN_GOAL_MIN_USDC = 2_000;  // $2,000
+export const CAMPAIGN_GOAL_MAX_USDC = 2_000;  // $2,000
 
 // ─── FE-L3: Centralized UI constants ─────────────────────────────────────────
 // Keeping these in one place ensures they stay in sync with on-chain limits.
@@ -257,6 +257,17 @@ export function getSourceChain(chainId: number): SourceChain | undefined {
 export function isBaseChain(chainId: number): boolean {
   return chainId === 8453 || chainId === 84532;
 }
+
+// ─── Multisig Treasury Config ─────────────────────────────────────────────────
+
+export const MULTISIG_SIGNERS = [
+  { name: "Abeokuta Lead",  address: process.env.NEXT_PUBLIC_SIGNER_1 || "0x0000000000000000000000000000000000000000" },
+  { name: "Logos",  address: process.env.NEXT_PUBLIC_SIGNER_2 || "0x0000000000000000000000000000000000000000" },
+  { name: "Community Rep",  address: process.env.NEXT_PUBLIC_SIGNER_3 || "0x0000000000000000000000000000000000000000" },
+];
+
+export const REQUIRED_SIGS = parseInt(process.env.NEXT_PUBLIC_REQUIRED_SIGS || "2");
+export const TOTAL_SIGS    = MULTISIG_SIGNERS.length;
 
 // ─── ABIs (minimal — only functions the frontend calls) ───────────────────────
 

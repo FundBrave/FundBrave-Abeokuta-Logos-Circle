@@ -27,6 +27,7 @@ import {
   getExplorerUrl,
   CONTRACT_ADDRESSES,
   TARGET_CHAIN_ID,
+  CAMPAIGN_GOAL_MAX_USDC,
 } from "../lib/contracts";
 
 // ─── Multisig signers from env (optional, informational only) ────────────────
@@ -204,7 +205,7 @@ export default function AdminPage() {
             <StatCard
               label="Total Raised"
               value={`$${formatUSDC(admin.totalRaised)}`}
-              sub={`${progressPct.toFixed(0)}% of $${formatUSDC(admin.goalMin)} min`}
+              sub={`${progressPct.toFixed(0)}% of $${CAMPAIGN_GOAL_MAX_USDC.toLocaleString()}`}
             />
             <StatCard
               label="USDC in Contract"
@@ -280,7 +281,7 @@ export default function AdminPage() {
           {!admin.canWithdraw && (
             <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-400 mb-4">
               Withdrawal is only possible after the campaign deadline passes AND the minimum goal
-              ($1,000) is reached.
+              ($2,000) is reached.
             </div>
           )}
 

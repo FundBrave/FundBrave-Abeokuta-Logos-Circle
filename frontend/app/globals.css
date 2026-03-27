@@ -33,6 +33,12 @@
     color: var(--text-primary);
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
   }
+
+  .material-symbols-outlined {
+    font-size: inherit !important;
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    vertical-align: middle;
+  }
 }
 
 @layer components {
@@ -99,7 +105,55 @@
   }
 
   .gradient-text {
-    background: linear-gradient(135deg, var(--accent) 0%, var(--secondary) 100%);
+    background: linear-gradient(135deg, #2563eb 0%, #7c3aed 50%, #f97316 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .glass-card {
+    background: rgba(17, 24, 39, 0.75);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(67, 70, 85, 0.3);
+  }
+
+  .primary-gradient-bg {
+    background: linear-gradient(135deg, #2563eb 0%, #6001d1 100%);
+  }
+
+  .progress-gradient-bg {
+    background: linear-gradient(90deg, #2563eb 0%, #7c3aed 50%, #f97316 100%);
+  }
+
+  .glow-shadow-primary {
+    box-shadow: 0 0 25px -5px rgba(37, 99, 235, 0.6);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 40px -10px rgba(37, 99, 235, 0.2);
+  }
+
+  .gradient-border {
+    background: linear-gradient(135deg, #2563eb 0%, #6001d1 50%, #2563eb 100%);
+    padding: 1px;
+    border-radius: 1rem;
+  }
+
+  .gradient-border > * {
+    border-radius: calc(1rem - 1px);
+  }
+
+  .card-radial-blue {
+    background: radial-gradient(circle at top right, rgba(37, 99, 235, 0.1), transparent), #111827;
+  }
+
+  .card-radial-purple {
+    background: radial-gradient(circle at top right, rgba(124, 58, 237, 0.1), transparent), #111827;
+  }
+
+  .text-gradient-brand {
+    background: linear-gradient(135deg, #ffb690 0%, #6001d1 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -167,4 +221,16 @@
 
 .hover-lift:hover {
   animation: hover-lift 0.3s ease-out forwards;
+}
+
+/* Fund flow pulse dot */
+@keyframes flow-pulse {
+  0% { left: 0%; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+
+.flow-dot {
+  animation: flow-pulse 2.5s ease-in-out infinite;
 }

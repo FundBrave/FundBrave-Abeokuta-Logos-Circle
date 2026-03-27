@@ -7,6 +7,7 @@ import {
   CONTRACT_ADDRESSES,
   TARGET_CHAIN_ID,
   formatUSDC,
+  CAMPAIGN_GOAL_MAX_USDC,
 } from "../lib/contracts";
 
 /**
@@ -79,9 +80,11 @@ export function useCampaignStats() {
     unrealizedYield:      stakingStats?.[4] ?? 0n,
 
     // Formatted helpers
+    // goalMin/goalMax display uses the frontend constant so the UI is always
+    // correct even before the contract is redeployed with the updated goal.
     totalRaisedFormatted:       formatUSDC(campaignStats?.[0] ?? 0n),
-    goalMinFormatted:           formatUSDC(campaignStats?.[1] ?? 0n),
-    goalMaxFormatted:           formatUSDC(campaignStats?.[2] ?? 0n),
+    goalMinFormatted:           formatUSDC(BigInt(CAMPAIGN_GOAL_MAX_USDC) * 1_000_000n),
+    goalMaxFormatted:           formatUSDC(BigInt(CAMPAIGN_GOAL_MAX_USDC) * 1_000_000n),
     totalStakedFormatted:       formatUSDC(stakingStats?.[0] ?? 0n),
     totalYieldGeneratedFormatted: formatUSDC(stakingStats?.[1] ?? 0n),
   };

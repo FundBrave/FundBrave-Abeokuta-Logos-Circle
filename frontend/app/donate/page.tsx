@@ -3,20 +3,22 @@
 import { useState, useEffect } from "react";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient, useBalance, useReadContract } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import Link from "next/link";
-import { ArrowLeft, CheckCircle2, Loader2, AlertCircle, ExternalLink, DollarSign } from "lucide-react";
 import { useDonate } from "../hooks/useDonate";
 import { useCampaignStats } from "../hooks/useCampaignStats";
-import { FundBraveLogo } from "../components/FundBraveLogo";
-import { ProgressBar } from "../components/ProgressBar";
+import { SubPageNav } from "../components/sections/SubPageNav";
+import { Footer } from "../components/sections/Footer";
 import { CrossChainDonate } from "../components/CrossChainDonate";
-import { ManualDonations } from "../components/ManualDonations";
+import { DonateCampaignBanner } from "../components/sections/DonateCampaignBanner";
+import { DonateTokenSelector } from "../components/sections/DonateTokenSelector";
+import { DonateAmountInput } from "../components/sections/DonateAmountInput";
+import { DonateSummaryCard } from "../components/sections/DonateSummaryCard";
+import { DonateCrossChainInfo } from "../components/sections/DonateCrossChainInfo";
+import { DonateManualSection } from "../components/sections/DonateManualSection";
+import { DonateTransparencyNote } from "../components/sections/DonateTransparencyNote";
+import { DonateSuccessScreen } from "../components/sections/DonateSuccessScreen";
 import {
   SUPPORTED_TOKENS,
   SOURCE_CHAINS,
-  USDC_DECIMALS,
-  getExplorerUrl,
-  formatUSDC,
   isBaseChain,
   PRESET_AMOUNTS,
   PRESET_AMOUNTS_ETH,
@@ -40,8 +42,7 @@ export default function DonatePage() {
   const [isApprovalStep, setIsApprovalStep] = useState(false);
   const [showHighValueWarning, setShowHighValueWarning] = useState(false);
 
-  // Testnet faucet — calls MockUSDC.mint(address, 1000 USDC) so testers can donate.
-  // Uses the same pre-simulation approach as useDonate to bypass MetaMask's RPC gas estimation.
+  // ── Testnet faucet — calls MockUSDC.mint(address, 1000 USDC) so testers can donate. ──
   const publicClient = usePublicClient({ chainId: TARGET_CHAIN_ID });
   const { writeContract: mintToken, data: mintTxHash, isPending: isMinting, reset: resetMint } = useWriteContract();
   const { isSuccess: mintSuccess } = useWaitForTransactionReceipt({
@@ -86,14 +87,14 @@ export default function DonatePage() {
     mintToken({ ...params, gas: gas ?? 100_000n });
   };
 
-  // ETH balance on Base Sepolia (for display when ETH/WETH token is selected)
+  // ETH balance on Base Sepolia
   const { data: ethBalance } = useBalance({
     address,
     chainId: TARGET_CHAIN_ID,
     query:   { enabled: !!address, refetchInterval: 10_000 },
   });
 
-  // ETH/WETH live price for displaying USD equivalent below the input
+  // ETH/WETH live price for displaying USD equivalent
   const [ethPriceUSD, setEthPriceUSD] = useState<number | null>(null);
   useEffect(() => {
     if (!selectedToken.isNative && selectedToken.symbol !== "WETH") return;
@@ -123,13 +124,11 @@ export default function DonatePage() {
     }
   })();
 
-  // True when user is connected to a non-Base chain (cross-chain mode)
   const isOnForeignChain = !!chain && !isBaseChain(chain.id);
-  // True when user is on a completely unsupported chain (not in SOURCE_CHAINS either)
   const isOnUnknownChain = !!chain && !SOURCE_CHAINS.find((c) => c.chainId === chain.id);
+  const displaySymbol = selectedToken.symbol;
 
   // FE-H1: Watch `address` (not `isConnected`) so state resets on both disconnect AND wallet switch.
-  // isConnected stays true during wallet switch, so watching only it misses the switch case.
   useEffect(() => {
     if (!address) {
       setAmount("");
@@ -137,15 +136,12 @@ export default function DonatePage() {
       setShowHighValueWarning(false);
       donate.reset();
     } else {
-      // Eagerly fetch balance when wallet connects (in case the query didn't fire automatically)
       donate.refetchBalance();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);
 
   // After approval tx confirms, automatically proceed to the donation step.
-  // Previously this just cleared isApprovalStep without triggering the donate tx —
-  // the donation was never sent. Now we call proceedAfterApproval directly.
   useEffect(() => {
     if (donate.isSuccess && isApprovalStep) {
       setIsApprovalStep(false);
@@ -177,343 +173,298 @@ export default function DonatePage() {
     if (selectedToken.isNative) {
       donate.donateETH(parsedAmount);
     } else if (selectedToken.address === SUPPORTED_TOKENS[0].address) {
-      // USDC
-      if (!donate.usdcAllowance || donate.usdcAllowance < parsedAmount) {
-        donate.donateUSDC(parsedAmount); // will approve first
-      } else {
-        donate.donateUSDC(parsedAmount);
-      }
+      donate.donateUSDC(parsedAmount);
     } else {
       donate.donateERC20(selectedToken.address as Address, parsedAmount);
     }
   };
 
+  const handleTokenSelect = (token: TokenInfo) => {
+    setSelectedToken(token);
+    setAmount("");
+    resetMint();
+  };
+
+  // ── Success state ──
   if (donate.step === "success") {
-    return <SuccessScreen txHash={donate.txHash} amount={amount} token={selectedToken.symbol} onReset={donate.reset} />;
+    return (
+      <DonateSuccessScreen
+        txHash={donate.txHash}
+        amount={amount}
+        token={selectedToken.symbol}
+        onReset={donate.reset}
+      />
+    );
   }
 
   return (
-    <div className="min-h-screen bg-[#0A0E1A]">
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-[#111827] border-b border-white/10 backdrop-blur-sm">
-        <div className="max-w-2xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 text-white/60 hover:text-white transition-colors cursor-pointer" aria-label="Back to home">
-            <ArrowLeft className="w-4 h-4" />
-            <FundBraveLogo className="h-7" />
-          </Link>
-          <ConnectButton showBalance={false} chainStatus="icon" accountStatus="avatar" />
-        </div>
-      </header>
+    <div className="min-h-screen bg-surface-container-lowest text-on-surface font-body">
+      <SubPageNav />
 
-      <div className="max-w-2xl mx-auto px-4 py-10">
-        {/* Campaign progress reminder */}
-        <div className="bg-[#111827] border border-white/10 rounded-2xl p-4 mb-6 flex items-center justify-between">
-          <div>
-            <div className="text-white/50 text-sm">Campaign raised</div>
-            <div className="text-white font-bold">${stats.totalRaisedFormatted} <span className="text-white/40 font-normal">of ${stats.goalMaxFormatted}</span></div>
-          </div>
-          <div className="w-32">
-            <ProgressBar percent={stats.progressPercent} />
-            <div className="text-right text-xs text-white/40 mt-1">{stats.progressPercent.toFixed(1)}%</div>
-          </div>
-        </div>
+      <main className="pt-32 pb-24 px-6">
+        <div className="max-w-2xl mx-auto space-y-8">
+          {/* 1. Mini Campaign Progress Banner */}
+          <DonateCampaignBanner />
 
-        <h1 className="text-2xl font-bold text-white mb-2">Make a Donation</h1>
-        <p className="text-white/50 text-sm mb-8">
-          All donations are converted to USDC and held in a transparent multisig treasury.
-        </p>
-
-        {/* Campaign goal reached — no further donations accepted */}
-        {stats.maxGoalReached && (
-          <div className="bg-green-500/10 border border-green-500/30 rounded-2xl p-6 mb-6 text-center">
-            <div className="text-3xl mb-3">🎉</div>
-            <h2 className="text-green-400 font-bold text-lg mb-1">Campaign Goal Reached!</h2>
-            <p className="text-white/60 text-sm">
-              The campaign has raised its full goal of ${stats.goalMaxFormatted} USDC.
-              No further donations are being accepted. Thank you to everyone who contributed!
+          {/* 2. Page Title Area */}
+          <div className="text-center space-y-4">
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-tertiary-container/30 to-tertiary/10 border border-tertiary/20 shadow-[0_0_40px_rgba(181,78,0,0.15)]">
+              <span
+                className="material-symbols-outlined text-tertiary !text-5xl"
+                style={{ fontVariationSettings: "'FILL' 1" }}
+              >
+                favorite
+              </span>
+            </div>
+            <h1 className="text-4xl md:text-5xl font-extrabold font-headline tracking-tighter text-on-surface">
+              Make a Donation
+            </h1>
+            <p className="text-on-surface-variant max-w-lg mx-auto leading-relaxed">
+              Supporting women entrepreneurs in{" "}
+              <span className="text-on-surface font-semibold">Abeokuta</span>.
+              All contributions are secured via a multisig treasury and converted
+              to USDC for transparent local distribution.
             </p>
           </div>
-        )}
 
-        {/* Unknown / unsupported chain */}
-        {!stats.maxGoalReached && isConnected && isOnUnknownChain && (
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 mb-6 flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <div className="text-amber-400 font-medium text-sm">Unsupported network</div>
-              <div className="text-white/60 text-xs mt-1">
-                Switch to Base Sepolia, Ethereum, Polygon, Arbitrum, or Optimism.
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Not connected state */}
-        {!stats.maxGoalReached && !isConnected && (
-          <div className="bg-[#111827] border border-white/10 rounded-2xl p-8 text-center mb-6">
-            <p className="text-white/60 mb-4">Connect your wallet to donate.</p>
-            <div className="flex justify-center">
-              <ConnectButton />
-            </div>
-          </div>
-        )}
-
-        {/* ── Cross-chain mode (non-Base chain) ── */}
-        {!stats.maxGoalReached && isConnected && isOnForeignChain && !isOnUnknownChain && (
-          <CrossChainDonate
-            onSuccess={(hash) => {
-              // Route to success screen via same-chain reset so layout is consistent
-              donate.reset();
-            }}
-          />
-        )}
-
-        {/* ── Same-chain mode (Base / Base Sepolia) ── */}
-        {/* FE-H5: Also guard against unknown chains — isOnUnknownChain implies isOnForeignChain,
-            but explicit guard clarifies intent and protects against future logic changes */}
-        {!stats.maxGoalReached && isConnected && !isOnForeignChain && !isOnUnknownChain && (
-          <>
-            {/* Token selector */}
-            <div className="mb-6">
-              <label className="block text-sm text-white/60 mb-2">Select token</label>
-              <div className="grid grid-cols-4 gap-2">
-                {SUPPORTED_TOKENS.map((token) => (
-                  <button
-                    key={token.symbol}
-                    onClick={() => { setSelectedToken(token); setAmount(""); resetMint(); }}
-                    className={`rounded-xl p-3 text-center text-sm font-medium transition-all cursor-pointer min-h-11 ${
-                      selectedToken.symbol === token.symbol
-                        ? "bg-[#F97316] text-white shadow-lg shadow-[#F97316]/30"
-                        : "bg-[#111827] border border-white/10 text-white/60 hover:text-white hover:bg-white/5"
-                    }`}
-                    aria-label={`Select ${token.symbol}`}
-                  >
-                    {token.symbol}
-                  </button>
-                ))}
-              </div>
-              {selectedToken.symbol !== "USDC" && (
-                <p className="text-white/40 text-xs mt-2">
-                  {selectedToken.symbol} will be automatically swapped to USDC via DEX.
-                </p>
-              )}
-            </div>
-
-            {/* Amount input */}
-            <div className="mb-6">
-              <label className="block text-sm text-white/60 mb-2">Amount</label>
-              <div className="relative">
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={amount}
-                  onChange={(e) => {
-                    // FE-H1: Strip non-numeric chars (prevents e, +, -, scientific notation)
-                    const sanitized = e.target.value.replace(/[^0-9.]/g, "");
-                    // Only allow one decimal point
-                    const parts = sanitized.split(".");
-                    setAmount(parts.length > 2 ? parts[0] + "." + parts.slice(1).join("") : sanitized);
-                  }}
-                  placeholder="0.00"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-lg font-medium focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]/20 transition-colors pr-20"
-                  aria-label="Donation amount"
-                />
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40 font-medium">
-                  {selectedToken.symbol}
-                </span>
-              </div>
-
-              {/* Preset amounts — token-aware */}
-              <div className="flex gap-2 mt-3 flex-wrap">
-                {(selectedToken.isNative || selectedToken.symbol === "WETH"
-                  ? PRESET_AMOUNTS_ETH
-                  : PRESET_AMOUNTS
-                ).map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setAmount(p.toString())}
-                    className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-white/60 hover:text-white transition-all cursor-pointer min-h-9"
-                    aria-label={`Preset: ${p} ${selectedToken.symbol}`}
-                  >
-                    {selectedToken.isNative || selectedToken.symbol === "WETH"
-                      ? `${p} ETH`
-                      : `$${p}`}
-                  </button>
-                ))}
-              </div>
-
-              {/* USD equivalent for ETH / WETH */}
-              {(selectedToken.isNative || selectedToken.symbol === "WETH") && amount && parseFloat(amount) > 0 && (
-                <p className="text-white/40 text-xs mt-2">
-                  {ethPriceUSD
-                    ? `≈ $${(parseFloat(amount) * ethPriceUSD).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`
-                    : "Fetching price…"}
-                </p>
-              )}
-
-              {amount && parseFloat(amount) > 0 && parseFloat(amount) < MIN_DONATION_USD
-                && !selectedToken.isNative && selectedToken.symbol !== "WETH" && (
-                <p className="text-amber-400 text-xs mt-2">Minimum donation is ${MIN_DONATION_USD} USDC</p>
-              )}
-              {amount && parseFloat(amount) > MAX_DONATION_USD
-                && !selectedToken.isNative && selectedToken.symbol !== "WETH" && (
-                <p className="text-amber-400 text-xs mt-2">Maximum per-transaction is ${MAX_DONATION_USD.toLocaleString()} USDC (circuit breaker limit)</p>
-              )}
-            </div>
-
-            {/* Testnet faucet — visible on Base Sepolia for USDC, DAI, WETH */}
-            {(TARGET_CHAIN_ID as number) === 84532 && !selectedToken.isNative && (() => {
-              const faucetCfg: Record<string, { amount: bigint; label: string }> = {
-                USDC: { amount: 1_000n * 1_000_000n,             label: "Get 1,000 test USDC" },
-                DAI:  { amount: 1_000n * 10n ** 18n,             label: "Get 1,000 test DAI"  },
-                WETH: { amount: 1n    * 10n ** 18n,              label: "Get 1 test WETH"      },
-              };
-              const cfg = faucetCfg[selectedToken.symbol];
-              if (!cfg) return null;
-              return (
-                <div className="bg-[#111827] border border-white/10 rounded-2xl p-4 mb-6 flex items-center justify-between">
-                  <div>
-                    <p className="text-white/60 text-xs">Your {selectedToken.symbol} balance</p>
-                    <p className="text-white text-sm font-medium">
-                      {tokenBalanceData !== undefined
-                        ? selectedToken.decimals === 6
-                          ? `${formatUSDC(tokenBalanceData as bigint)} ${selectedToken.symbol}`
-                          : `${(Number(tokenBalanceData) / 1e18).toFixed(4)} ${selectedToken.symbol}`
-                        : <span className="text-white/40">—</span>}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => handleMintTestToken(selectedToken.address as Address, cfg.amount)}
-                    disabled={isMinting || mintSuccess}
-                    className="bg-white/10 hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors cursor-pointer"
-                  >
-                    {isMinting ? "Minting…" : mintSuccess ? "✓ Minted" : cfg.label}
-                  </button>
-                </div>
-              );
-            })()}
-
-            {/* ETH balance — shown when ETH or WETH is selected */}
-            {(selectedToken.isNative || selectedToken.symbol === "WETH") && (
-              <div className="bg-[#111827] border border-white/10 rounded-2xl p-4 mb-6 flex items-center justify-between">
-                <div>
-                  <p className="text-white/60 text-xs">Your ETH balance</p>
-                  <p className="text-white text-sm font-medium">
-                    {ethBalance
-                      ? `${parseFloat(ethBalance.formatted).toFixed(4)} ETH`
-                      : <span className="text-white/40">Loading…</span>}
-                  </p>
-                  {ethBalance && ethPriceUSD && (
-                    <p className="text-white/40 text-xs mt-0.5">
-                      ≈ ${(parseFloat(ethBalance.formatted) * ethPriceUSD).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Cross-chain info pill — informational for users on Base */}
-            <div className="bg-[#111827] border border-white/10 rounded-2xl p-4 mb-6">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-sm font-medium text-white">Cross-chain also supported</div>
-                <span className="bg-[#2563EB]/20 text-[#2563EB] text-xs px-2 py-1 rounded-full">Via LayerZero</span>
-              </div>
-              <div className="flex gap-2 flex-wrap">
-                {SOURCE_CHAINS.filter((c) => !isBaseChain(c.chainId)).map((c) => (
-                  <span key={c.chainId} className="text-xs bg-white/5 rounded-lg px-2 py-1 text-white/50">
-                    {c.icon} {c.name}
-                  </span>
-                ))}
-              </div>
-              <p className="text-white/30 text-xs mt-2">
-                Switch network in your wallet to donate from another chain.
+          {/* Campaign goal reached — no further donations accepted */}
+          {stats.maxGoalReached && (
+            <div className="glass-card rounded-2xl p-6 border border-green-500/20 text-center space-y-3">
+              <div className="text-3xl">🎉</div>
+              <h2 className="text-green-400 font-headline font-bold text-lg">Campaign Goal Reached!</h2>
+              <p className="text-on-surface-variant text-sm">
+                The campaign has raised its full goal of ${stats.goalMaxFormatted} USDC.
+                No further donations are being accepted. Thank you to everyone who contributed!
               </p>
             </div>
+          )}
 
-            {/* FE-M2: High-value confirmation prompt */}
-            {showHighValueWarning && !donate.isProcessing && (
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 mb-4">
-                <p className="text-amber-400 text-sm font-medium mb-1">Confirm large donation</p>
-                <p className="text-white/60 text-xs mb-3">
-                  You are about to donate{" "}
-                  <strong className="text-white">{amount} {selectedToken.symbol}</strong>.
-                  This transaction is permanent and non-refundable. Are you sure?
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleDonate}
-                    className="flex-1 bg-[#F97316] hover:bg-[#EA580C] text-white font-medium py-2 px-3 rounded-xl transition-colors text-sm cursor-pointer min-h-10"
-                  >
-                    Yes, donate {amount} {selectedToken.symbol}
-                  </button>
-                  <button
-                    onClick={() => setShowHighValueWarning(false)}
-                    className="flex-1 border border-white/10 bg-white/5 hover:bg-white/10 text-white font-medium py-2 px-3 rounded-xl transition-colors text-sm cursor-pointer min-h-10"
-                  >
-                    Cancel
-                  </button>
+          {/* Unknown / unsupported chain */}
+          {!stats.maxGoalReached && isConnected && isOnUnknownChain && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3">
+              <span className="material-symbols-outlined text-amber-400 flex-shrink-0 mt-0.5">
+                warning
+              </span>
+              <div>
+                <div className="text-amber-400 font-medium text-sm">
+                  Unsupported network
+                </div>
+                <div className="text-on-surface-variant text-xs mt-1">
+                  Switch to Base Sepolia, Ethereum, Polygon, Arbitrum, or
+                  Optimism.
                 </div>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Error message */}
-            {donate.errorMsg && (
-              <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-4 mb-4 flex items-start gap-3">
-                <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-                <p className="text-red-400 text-sm">{donate.errorMsg}</p>
+          {/* Not connected state */}
+          {!stats.maxGoalReached && !isConnected && (
+            <div className="glass-card rounded-2xl p-8 text-center border border-outline-variant/15">
+              <p className="text-on-surface-variant mb-4">
+                Connect your wallet to donate.
+              </p>
+              <div className="flex justify-center">
+                <ConnectButton />
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Step indicator during approval */}
-            {donate.step === "approving" && (
-              <StepBanner step={1} total={2} label="Approving token spend…" sub="Please confirm in your wallet" />
-            )}
-            {donate.step === "donating" && (
-              <StepBanner step={2} total={2} label="Submitting donation…" sub="Please confirm in your wallet" />
-            )}
-            {donate.step === "confirming" && (
-              <StepBanner step={2} total={2} label="Confirming on chain…" sub="Waiting for block confirmation" />
-            )}
+          {/* ── Cross-chain mode (non-Base chain) ── */}
+          {!stats.maxGoalReached && isConnected && isOnForeignChain && !isOnUnknownChain && (
+            <CrossChainDonate
+              onSuccess={() => {
+                donate.reset();
+              }}
+            />
+          )}
 
-            {/* After approval — show a brief "Submitting donation…" state while auto-proceed fires */}
-            {donate.isSuccess && isApprovalStep && (
-              <StepBanner step={2} total={2} label="Submitting donation…" sub="Approval confirmed — sending donation now" />
-            )}
+          {/* ── Same-chain mode (Base / Base Sepolia) ── */}
+          {!stats.maxGoalReached && isConnected && !isOnForeignChain && !isOnUnknownChain && (
+            <>
+              {/* 3. Main Donation Card */}
+              <section className="glass-card rounded-2xl p-2 md:p-8 border border-outline-variant/15 space-y-10 shadow-2xl relative overflow-hidden">
+                {/* Decorative Glow */}
+                <div className="absolute -top-24 -right-24 w-64 h-64 bg-primary-container/10 blur-[100px] pointer-events-none" />
+                <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-tertiary-container/10 blur-[100px] pointer-events-none" />
 
-            {/* Donate button */}
-            {!isApprovalStep && (
-              <button
-                onClick={handleDonate}
-                disabled={!amount || parseFloat(amount) <= 0 || (!selectedToken.isNative && selectedToken.symbol !== "WETH" && (parseFloat(amount) < MIN_DONATION_USD || parseFloat(amount) > MAX_DONATION_USD)) || donate.isProcessing || showHighValueWarning}
-                className="bg-[#F97316] hover:bg-[#EA580C] disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-xl transition-colors w-full text-base flex items-center justify-center gap-2 min-h-12 cursor-pointer"
-                aria-label={`Donate ${amount ? `${amount} ${selectedToken.symbol}` : ""}`}
-              >
-                {donate.isProcessing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    {donate.step === "approving" ? "Approving…" : "Donating…"}
-                  </>
-                ) : (
-                  <>
-                    <DollarSign className="w-4 h-4" />
-                    {`Donate ${amount ? `${amount} ${selectedToken.symbol}` : ""}`}
-                  </>
+                {/* Section A: Token Selector */}
+                <DonateTokenSelector
+                  tokens={SUPPORTED_TOKENS}
+                  selectedToken={selectedToken}
+                  onSelect={handleTokenSelect}
+                />
+
+                {/* Section B: Amount Input */}
+                <DonateAmountInput
+                  amount={amount}
+                  onChange={setAmount}
+                  tokenSymbol={selectedToken.symbol}
+                  presets={selectedToken.isNative || selectedToken.symbol === "WETH" ? PRESET_AMOUNTS_ETH : PRESET_AMOUNTS}
+                />
+
+                {/* ETH/WETH USD equivalent */}
+                {(selectedToken.isNative || selectedToken.symbol === "WETH") && amount && ethPriceUSD && (
+                  <p className="text-on-surface-variant/60 text-xs -mt-6">
+                    ≈ ${(parseFloat(amount) * ethPriceUSD).toFixed(2)} USD
+                  </p>
                 )}
-              </button>
-            )}
 
-            <p className="text-center text-white/30 text-xs mt-4">
-              Funds go directly to the campaign multisig wallet.
-              Transaction is permanent and non-refundable once confirmed.
-            </p>
-          </>
-        )}
+                {/* Token balance display */}
+                {address && !selectedToken.isNative && tokenBalanceData !== undefined && (
+                  <div className="flex items-center justify-between text-xs text-on-surface-variant/60 -mt-6">
+                    <span>
+                      Balance: {(Number(tokenBalanceData) / 10 ** selectedToken.decimals).toFixed(selectedToken.decimals === 6 ? 2 : 4)} {displaySymbol}
+                    </span>
+                    {/* Testnet faucet */}
+                    <button
+                      onClick={() => handleMintTestToken(selectedToken.address as Address, BigInt(1000) * BigInt(10 ** selectedToken.decimals))}
+                      disabled={isMinting}
+                      className="text-primary hover:text-primary-fixed-dim transition-colors cursor-pointer disabled:opacity-40"
+                    >
+                      {isMinting ? "Minting…" : `Mint 1,000 ${displaySymbol} (testnet)`}
+                    </button>
+                  </div>
+                )}
 
-        {/* ── Manual / non-EVM donations (always visible) ── */}
-        <div className="mt-10">
-          <ManualDonations />
+                {/* ETH balance display */}
+                {address && selectedToken.isNative && ethBalance && (
+                  <div className="flex items-center justify-between text-xs text-on-surface-variant/60 -mt-6">
+                    <span>Balance: {parseFloat(ethBalance.formatted).toFixed(4)} ETH</span>
+                  </div>
+                )}
+
+                {/* Section C: Donation Summary */}
+                {amount && parseFloat(amount) > 0 && (
+                  <DonateSummaryCard
+                    amount={amount}
+                    tokenSymbol={selectedToken.symbol}
+                  />
+                )}
+
+                {/* Section D: Cross-chain info */}
+                <DonateCrossChainInfo />
+
+                {/* FE-M2: High-value confirmation prompt */}
+                {showHighValueWarning && !donate.isProcessing && (
+                  <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 space-y-3">
+                    <p className="text-amber-400 text-sm font-medium">
+                      Confirm large donation
+                    </p>
+                    <p className="text-on-surface-variant text-xs">
+                      You are about to donate{" "}
+                      <strong className="text-on-surface">
+                        {amount} {displaySymbol}
+                      </strong>
+                      . This transaction is permanent and non-refundable. Are you
+                      sure?
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleDonate}
+                        className="flex-1 bg-tertiary-container text-on-tertiary-container font-medium py-2 px-3 rounded-xl transition-all text-sm cursor-pointer hover:brightness-110 active:scale-[0.98]"
+                      >
+                        Yes, donate {amount} {displaySymbol}
+                      </button>
+                      <button
+                        onClick={() => setShowHighValueWarning(false)}
+                        className="flex-1 border border-outline-variant/20 bg-surface-container-high hover:bg-surface-variant text-on-surface font-medium py-2 px-3 rounded-xl transition-colors text-sm cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Error message */}
+                {donate.errorMsg && (
+                  <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 flex items-start gap-3">
+                    <span className="material-symbols-outlined text-red-400 flex-shrink-0 mt-0.5">
+                      error
+                    </span>
+                    <p className="text-red-400 text-sm">{donate.errorMsg}</p>
+                  </div>
+                )}
+
+                {/* Step indicators */}
+                {donate.step === "approving" && (
+                  <StepBanner
+                    step={1}
+                    total={2}
+                    label="Approving token spend…"
+                    sub="Please confirm in your wallet"
+                  />
+                )}
+                {donate.step === "donating" && (
+                  <StepBanner
+                    step={2}
+                    total={2}
+                    label="Submitting donation…"
+                    sub="Please confirm in your wallet"
+                  />
+                )}
+                {donate.step === "confirming" && (
+                  <StepBanner
+                    step={2}
+                    total={2}
+                    label="Confirming on chain…"
+                    sub="Waiting for block confirmation"
+                  />
+                )}
+
+                {/* After approval — auto-proceed fires, show brief status */}
+                {donate.isSuccess && isApprovalStep && (
+                  <StepBanner step={2} total={2} label="Submitting donation…" sub="Approval confirmed — sending donation now" />
+                )}
+
+                {/* Section E: Main CTA */}
+                {!isApprovalStep && (
+                  <button
+                    onClick={handleDonate}
+                    disabled={
+                      !amount ||
+                      parseFloat(amount) <= 0 ||
+                      (!selectedToken.isNative && selectedToken.symbol !== "WETH" && (parseFloat(amount) < MIN_DONATION_USD || parseFloat(amount) > MAX_DONATION_USD)) ||
+                      donate.isProcessing ||
+                      showHighValueWarning
+                    }
+                    className="w-full bg-gradient-to-r from-tertiary-container to-tertiary hover:brightness-110 text-on-tertiary py-5 rounded-xl font-extrabold font-headline text-lg flex items-center justify-center gap-3 shadow-[0_10px_40px_rgba(181,78,0,0.3)] active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    aria-label={`Donate ${amount ? `${amount} ${displaySymbol}` : ""}`}
+                  >
+                    {donate.isProcessing ? (
+                      <>
+                        <span className="material-symbols-outlined animate-spin">
+                          progress_activity
+                        </span>
+                        {donate.step === "approving"
+                          ? "Approving…"
+                          : "Donating…"}
+                      </>
+                    ) : (
+                      <>
+                        <span
+                          className="material-symbols-outlined"
+                          style={{ fontVariationSettings: "'FILL' 1" }}
+                        >
+                          favorite
+                        </span>
+                        Donate Now
+                      </>
+                    )}
+                  </button>
+                )}
+              </section>
+
+              {/* 4. Manual Donations Section */}
+              <DonateManualSection />
+
+              {/* 5. Transparency Note */}
+              <DonateTransparencyNote />
+            </>
+          )}
         </div>
-      </div>
+      </main>
+
+      <Footer />
     </div>
   );
 }
@@ -532,67 +483,15 @@ function StepBanner({
   sub: string;
 }) {
   return (
-    <div className="bg-[#2563EB]/10 border border-[#2563EB]/30 rounded-2xl p-4 mb-4 flex items-center gap-3">
-      <Loader2 className="w-5 h-5 text-[#2563EB] animate-spin flex-shrink-0" />
+    <div className="bg-primary-container/10 border border-primary-container/30 rounded-xl p-4 flex items-center gap-3">
+      <span className="material-symbols-outlined text-primary animate-spin flex-shrink-0">
+        progress_activity
+      </span>
       <div>
-        <div className="text-white text-sm font-medium">
+        <div className="text-on-surface text-sm font-medium">
           Step {step}/{total}: {label}
         </div>
-        <div className="text-white/50 text-xs">{sub}</div>
-      </div>
-    </div>
-  );
-}
-
-function SuccessScreen({
-  txHash,
-  amount,
-  token,
-  onReset,
-}: {
-  txHash?: `0x${string}`;
-  amount: string;
-  token: string;
-  onReset: () => void;
-}) {
-  return (
-    <div className="min-h-screen bg-[#0A0E1A] flex items-center justify-center px-4">
-      <div className="bg-[#111827] border border-white/10 rounded-2xl p-8 max-w-md w-full text-center">
-        <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-4">
-          <CheckCircle2 className="w-8 h-8 text-green-400" />
-        </div>
-        <h2 className="text-2xl font-bold text-white mb-2">Thank you!</h2>
-        <p className="text-white/60 mb-2">
-          Your donation of{" "}
-          <strong className="text-white">
-            {amount} {token}
-          </strong>{" "}
-          has been confirmed.
-        </p>
-        <p className="text-white/40 text-sm mb-6">
-          You&apos;re helping empower women entrepreneurs in Abeokuta, Nigeria.
-        </p>
-
-        {txHash && (
-          <a
-            href={getExplorerUrl(txHash)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 text-[#2563EB] text-sm mb-6 hover:underline cursor-pointer"
-          >
-            <ExternalLink className="w-4 h-4" />
-            View transaction
-          </a>
-        )}
-
-        <div className="flex gap-3">
-          <Link href="/" className="flex-1 border border-white/10 bg-white/5 hover:bg-white/10 text-white font-medium py-2 px-3 rounded-xl transition-colors text-sm text-center cursor-pointer min-h-10 flex items-center justify-center">
-            Back to campaign
-          </Link>
-          <button onClick={onReset} className="flex-1 bg-[#F97316] hover:bg-[#EA580C] text-white font-medium py-2 px-3 rounded-xl transition-colors text-sm cursor-pointer min-h-10">
-            Donate again
-          </button>
-        </div>
+        <div className="text-on-surface-variant text-xs">{sub}</div>
       </div>
     </div>
   );

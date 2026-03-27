@@ -1,5 +1,7 @@
 "use client";
 
+import "./lib/gsap-config"; // Register GSAP plugins once before any page mounts
+
 import { WagmiProvider, createConfig, http } from "wagmi";
 import { base, baseSepolia, mainnet, polygon, arbitrum, optimism, sepolia, optimismSepolia } from "wagmi/chains";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
