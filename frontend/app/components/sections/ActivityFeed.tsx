@@ -22,7 +22,7 @@ export function ActivityFeed() {
 
   return (
     <section ref={sectionRef} className="py-32 bg-surface-container-low/30 border-t border-outline-variant/10">
-      <div className="max-w-[1440px] mx-auto px-6 lg:px-20">
+      <div className="max-w-[1440px] mx-auto px-2 lg:px-20">
         <div className="activity-header flex flex-col md:flex-row justify-between items-center mb-16 gap-4">
           <h3 className="text-3xl font-headline font-extrabold flex items-center gap-4">
             <span className="text-4xl text-tertiary">

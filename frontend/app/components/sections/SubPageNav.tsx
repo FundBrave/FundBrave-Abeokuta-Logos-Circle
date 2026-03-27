@@ -18,7 +18,7 @@ interface SubPageNavProps {
 export function SubPageNav({ backHref = "/", title, navLinks }: SubPageNavProps) {
   return (
     <header className="fixed top-0 w-full z-50 bg-[#313442]/60 backdrop-blur-xl bg-gradient-to-b from-[#171b28] to-transparent shadow-[0_32px_32px_rgba(223,226,243,0.08)]">
-      <div className="flex justify-between items-center px-6 py-4 max-w-7xl mx-auto">
+      <div className="flex justify-between items-center px-2 py-4 max-w-7xl mx-auto">
         <div className="flex items-center gap-4">
           <Link
             href={backHref}

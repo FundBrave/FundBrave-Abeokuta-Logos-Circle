@@ -11,7 +11,6 @@ export function ProgressCard() {
   const stats = useCampaignStats();
 
   const raised = stats.totalRaisedFormatted;
-  const goalMin = stats.goalMinFormatted;
   const goalMax = stats.goalMaxFormatted;
   const progressPercent = Math.round(stats.progressPercent);
   const donorCount = Number(stats.donorCount);
@@ -100,7 +99,7 @@ export function ProgressCard() {
   );
 
   return (
-    <section ref={sectionRef} className="px-6 lg:px-20 -mt-24 relative z-30">
+    <section ref={sectionRef} className="px-2 lg:px-20 -mt-24 relative z-30">
       <GlassCard className="p-8 md:p-12 max-w-[1440px] mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
           {/* Left: Financials & Progress */}
@@ -110,10 +109,10 @@ export function ProgressCard() {
                 <p className="progress-label text-on-surface-variant text-sm font-bold uppercase tracking-widest mb-2">
                   Total Raised
                 </p>
-                <h2 className="text-6xl md:text-7xl font-headline font-extrabold text-on-surface">
+                <h2 className="text-6xl md:text-6xl font-headline font-extrabold text-on-surface">
                   <span ref={totalRaisedRef}>{raised}</span>{" "}
                   <span className="text-2xl text-on-surface-variant/40 font-bold">
-                    / {goalMin}–{goalMax}
+                    / {goalMax}
                   </span>
                 </h2>
                 <p className="text-on-surface-variant text-xs mt-1 font-bold">
@@ -182,7 +181,7 @@ export function ProgressCard() {
           {/* Right: Verification & Multiplier */}
           <div className="lg:col-span-5 flex flex-col gap-4 border-t lg:border-t-0 lg:border-l border-outline-variant/10 pt-12 lg:pt-0 lg:pl-12">
             {/* Impact Multiplier */}
-            <div className="progress-right-card flex items-center justify-between p-6 bg-surface-container-low/40 rounded-2xl">
+            <div className="progress-right-card flex items-center justify-between p-2 md:p-6 bg-surface-container-low/40 rounded-2xl">
               <div>
                 <h3 className="text-on-surface-variant text-xs font-bold uppercase tracking-widest mb-1">
                   Impact Multiplier
@@ -195,7 +194,7 @@ export function ProgressCard() {
             </div>
 
             {/* Verification */}
-            <div className="progress-right-card flex items-center justify-between p-6 bg-surface-container-low/40 rounded-2xl">
+            <div className="progress-right-card flex items-center justify-between p-0 md:p-6 bg-surface-container-low/40 rounded-2xl">
               <div>
                 <h3 className="text-on-surface-variant text-xs font-bold uppercase tracking-widest mb-1">
                   Verification
@@ -210,7 +209,7 @@ export function ProgressCard() {
             </div>
 
             {/* Donor avatars */}
-            <div className="progress-right-card p-6 bg-surface-container-low/20 rounded-2xl border border-outline-variant/10">
+            <div className="progress-right-card p-2 md:p-6 bg-surface-container-low/20 rounded-2xl border border-outline-variant/10">
               <div className="flex -space-x-3 mb-4">
                 {[2, 3, 4].map((i) => (
                   <img

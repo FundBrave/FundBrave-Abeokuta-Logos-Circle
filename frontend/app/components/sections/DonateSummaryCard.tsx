@@ -9,7 +9,7 @@ export function DonateSummaryCard({
   amount,
   tokenSymbol,
 }: DonateSummaryCardProps) {
-  const displaySymbol = tokenSymbol === "WETH" ? "USDT" : tokenSymbol;
+  const displaySymbol = tokenSymbol;
   const numAmount = parseFloat(amount) || 0;
   // Estimate: campaign receives amount minus small gas overhead
   const netAmount = Math.max(numAmount - 0.15, 0).toFixed(2);

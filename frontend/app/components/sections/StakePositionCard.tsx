@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import { useScrollReveal } from "../../hooks/useScrollReveal";
 
 interface StakePositionCardProps {
+  stakerPrincipal: bigint;
   stakerPrincipalFormatted: string;
   pendingYieldFormatted: string;
   pendingCauseFormatted: string;
@@ -13,9 +14,11 @@ interface StakePositionCardProps {
   isProcessing: boolean;
   step: string;
   onClaimYield: () => void;
+  onCompoundYield: () => void;
 }
 
 export function StakePositionCard({
+  stakerPrincipal,
   stakerPrincipalFormatted,
   pendingYieldFormatted,
   pendingCauseFormatted,
@@ -24,8 +27,10 @@ export function StakePositionCard({
   isProcessing,
   step,
   onClaimYield,
+  onCompoundYield,
 }: StakePositionCardProps) {
-  const hasYield = pendingYield > 0n || pendingCause > 0n;
+  const hasYield    = pendingYield > 0n || pendingCause > 0n;
+  const isStaked    = stakerPrincipal > 0n;
   const [showTooltip, setShowTooltip] = useState(false);
   const ref = useScrollReveal<HTMLElement>({ y: 30, duration: 0.6 });
 
@@ -78,7 +83,7 @@ export function StakePositionCard({
           </div>
         </div>
 
-        {/* Claim yield footer */}
+        {/* Claim / Compound footer */}
         <div className="flex items-center justify-between pt-6 border-t border-outline-variant/20">
           <div className="relative flex items-center gap-2">
             <button
@@ -104,21 +109,38 @@ export function StakePositionCard({
               </div>
             )}
           </div>
-          {hasYield ? (
-            <button
-              onClick={onClaimYield}
-              disabled={isProcessing}
-              className="bg-surface-container-highest hover:bg-surface-bright text-on-surface px-6 py-2 rounded-xl text-sm font-bold transition-all active:scale-95 border border-outline-variant/20 disabled:opacity-40"
-            >
-              {isProcessing && step === "claiming" ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                "Claim Yield"
-              )}
-            </button>
+
+          {/* Always show actions when staked; disable when no yield yet */}
+          {isStaked ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onCompoundYield}
+                disabled={isProcessing || !hasYield}
+                title={!hasYield ? "No yield to compound yet" : "Re-stake your yield into Aave"}
+                className="text-on-surface-variant hover:text-primary px-4 py-2 rounded-xl text-sm font-bold transition-all active:scale-95 border border-outline-variant/20 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isProcessing && step === "compounding" ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  "Compound"
+                )}
+              </button>
+              <button
+                onClick={onClaimYield}
+                disabled={isProcessing || !hasYield}
+                title={!hasYield ? "No yield to claim yet" : "Claim your yield to your wallet"}
+                className="bg-surface-container-highest hover:bg-surface-bright text-on-surface px-6 py-2 rounded-xl text-sm font-bold transition-all active:scale-95 border border-outline-variant/20 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isProcessing && step === "claiming" ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  "Claim Yield"
+                )}
+              </button>
+            </div>
           ) : (
             <span className="text-on-surface-variant text-xs">
-              No yield accrued yet
+              Stake USDC below to start earning
             </span>
           )}
         </div>

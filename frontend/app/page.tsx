@@ -13,7 +13,7 @@ export default function CampaignPage() {
   return (
     <>
       <TopNavBar />
-      <main className="pt-20">
+      <main>
         <HeroSection />
         <ProgressCard />
         <ImpactModels />

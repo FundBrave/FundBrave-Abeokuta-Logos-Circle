@@ -29,12 +29,12 @@ export function DonateTokenSelector({
         {tokens.map((token) => {
           const isSelected = selectedToken.symbol === token.symbol;
           const displaySymbol =
-            token.symbol === "WETH" ? "USDT" : token.symbol;
+            token.symbol;
           return (
             <button
               key={token.symbol}
               onClick={() => onSelect(token)}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-full font-bold transition-all cursor-pointer ${
+              className={`flex items-center gap-2 px-3 md:px-5 py-2.5 rounded-full font-bold transition-all cursor-pointer ${
                 isSelected
                   ? "bg-tertiary text-on-tertiary shadow-[0_0_20px_rgba(255,182,144,0.3)]"
                   : "bg-surface-container-high text-on-surface-variant hover:text-on-surface border border-outline-variant/20"
@@ -51,7 +51,7 @@ export function DonateTokenSelector({
       </div>
       {selectedToken.symbol !== "USDC" && (
         <p className="text-on-surface-variant/60 text-xs">
-          {selectedToken.symbol === "WETH" ? "USDT" : selectedToken.symbol} will
+          {selectedToken.symbol} will
           be automatically swapped to USDC via DEX.
         </p>
       )}

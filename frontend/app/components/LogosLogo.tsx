@@ -1,21 +1,18 @@
-interface Props { className?: string }
+import Image from "next/image";
+
+interface Props { className?: string; size?: number }
 
 /**
- * Logos Network logo — minimalist geometric mark.
+ * Logos logo — served from the local copy of logos.co brand asset.
  */
-export function LogosLogo({ className = "h-8" }: Props) {
+export function LogosLogo({ className = "", size = 32 }: Props) {
   return (
-    <svg
-      viewBox="0 0 32 32"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
+    <Image
+      src="/images/logo/logos-logo.png"
+      alt="Logos"
+      width={size}
+      height={size}
       className={className}
-      aria-label="Logos Network"
-    >
-      <circle cx="16" cy="16" r="15" stroke="white" strokeWidth="1.5" opacity="0.6" />
-      <circle cx="16" cy="16" r="6"  fill="white" opacity="0.9" />
-      <path d="M16 1 L16 31" stroke="white" strokeWidth="1" opacity="0.3" />
-      <path d="M1 16 L31 16" stroke="white" strokeWidth="1" opacity="0.3" />
-    </svg>
+    />
   );
 }

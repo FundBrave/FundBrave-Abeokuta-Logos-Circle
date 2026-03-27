@@ -9,7 +9,7 @@ export function DonateTransparencyNote() {
       </div>
       <p className="text-xs text-on-surface-variant/80 leading-relaxed">
         This campaign is part of the{" "}
-        <span className="text-on-surface">Logos Network</span> humanitarian
+        <span className="text-on-surface">Logos</span> humanitarian
         initiative. 100% of the funds (less network fees) are distributed
         directly to the entrepreneurs. Each transaction is recorded on the
         public ledger for full accountability.

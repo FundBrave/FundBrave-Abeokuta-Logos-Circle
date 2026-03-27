@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useScrollReveal } from "../../hooks/useScrollReveal";
 
@@ -14,15 +15,29 @@ export function Footer() {
 
   return (
     <footer ref={ref} className="bg-[#050810] w-full py-20 border-t border-outline-variant/10 mt-20">
-      <div className="max-w-[1440px] mx-auto px-6 lg:px-20">
+      <div className="max-w-[1440px] mx-auto px-2 lg:px-20">
         <div className="flex flex-col md:flex-row justify-between items-center gap-12 mb-16">
           <div className="flex items-center gap-4">
+            <Image
+              src="/images/logo/Fundbrave_icon-gradient.png"
+              alt="FundBrave"
+              width={40}
+              height={40}
+              className="rounded-lg"
+            />
             <span className="text-2xl font-black text-on-surface font-headline">
               FundBrave
             </span>
             <span className="h-6 w-px bg-outline-variant/30" />
+            <Image
+              src="/images/logo/logos-logo.png"
+              alt="Logos"
+              width={32}
+              height={32}
+              className="rounded-full opacity-80"
+            />
             <span className="text-xl font-bold text-on-surface-variant/60 font-headline">
-              Logos Network
+              Logos
             </span>
           </div>
           <div className="flex flex-wrap justify-center gap-8">
@@ -41,7 +56,7 @@ export function Footer() {
         <div className="flex flex-col md:flex-row justify-between items-center pt-12 border-t border-outline-variant/5 gap-8">
           <div className="text-center md:text-left">
             <p className="text-on-surface-variant text-sm font-medium mb-1">
-              Powered by FundBrave &times; Logos Network
+              Powered by FundBrave &times; Logos
             </p>
             <p className="text-on-surface-variant/40 text-xs uppercase tracking-widest">
               &copy; {new Date().getFullYear()} Built for the Ethereal Vault

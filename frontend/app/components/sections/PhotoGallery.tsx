@@ -127,7 +127,7 @@ export function PhotoGallery() {
 
   return (
     <>
-      <section ref={sectionRef} className="py-32 px-6 lg:px-20 max-w-[1440px] mx-auto">
+      <section ref={sectionRef} className="py-32 px-2 lg:px-20 max-w-[1440px] mx-auto">
         <div className="gallery-header flex flex-col md:flex-row justify-between items-end mb-16 gap-6">
           <div className="max-w-xl">
             <h2 className="text-4xl md:text-5xl font-headline font-extrabold mb-4 tracking-tight">

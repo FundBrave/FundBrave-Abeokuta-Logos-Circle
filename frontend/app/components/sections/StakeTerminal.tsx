@@ -105,7 +105,7 @@ export function StakeTerminal({
               </span>
             </span>
             <span className="text-tertiary font-bold text-xs tracking-wider">
-              4.2% APY (Aave V3)
+              Variable APY (Aave V3)
             </span>
           </div>
         </div>

@@ -20,7 +20,7 @@ export function DonateSuccessScreen({
   onReset,
 }: DonateSuccessScreenProps) {
   const stats = useCampaignStats();
-  const displayToken = token === "WETH" ? "USDT" : token;
+  const displayToken = token;
   const donorNumber = Number(stats.donorCount) || 0;
 
   const handleCopyLink = async () => {
@@ -31,7 +31,7 @@ export function DonateSuccessScreen({
     }
   };
 
-  const shareText = `I just donated $${amount} USDC to empower women entrepreneurs in Abeokuta through @FundBrave × Logos Network! 🧡`;
+  const shareText = `I just donated $${amount} USDC to empower women entrepreneurs in Abeokuta through @FundBrave × Logos! 🧡`;
   const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`;
   const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareText)}`;
 
@@ -39,7 +39,7 @@ export function DonateSuccessScreen({
     <div className="min-h-screen bg-surface-container-lowest text-on-surface font-body flex flex-col">
       <SubPageNav />
 
-      <main className="flex-grow pt-24 pb-12 flex items-center justify-center relative overflow-hidden px-6">
+      <main className="flex-grow pt-24 pb-12 flex items-center justify-center relative overflow-hidden px-2">
         {/* Background Decorative Elements */}
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-primary/10 rounded-full blur-[120px]" />
@@ -148,8 +148,8 @@ export function DonateSuccessScreen({
               </span>
               .{" "}
               {donorNumber > 1
-                ? `Join ${donorNumber - 1} others empowering women entrepreneurs through the Logos Network.`
-                : "Be among the first to empower women entrepreneurs through the Logos Network."}
+                ? `Join ${donorNumber - 1} others empowering women entrepreneurs through the Logos.`
+                : "Be among the first to empower women entrepreneurs through the Logos."}
             </p>
 
             {/* Actions */}

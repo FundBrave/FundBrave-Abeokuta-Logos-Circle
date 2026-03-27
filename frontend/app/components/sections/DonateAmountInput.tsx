@@ -25,7 +25,7 @@ export function DonateAmountInput({
     );
   };
 
-  const displaySymbol = tokenSymbol === "WETH" ? "USDT" : tokenSymbol;
+  const displaySymbol = tokenSymbol;
 
   return (
     <div className="space-y-6">
@@ -55,9 +55,9 @@ export function DonateAmountInput({
             key={p}
             onClick={() => onChange(p.toString())}
             className="px-4 py-2 rounded-lg bg-surface-container-high text-sm font-medium hover:bg-surface-variant transition-colors border border-outline-variant/10 cursor-pointer"
-            aria-label={`Preset: $${p}`}
+            aria-label={`Preset: ${tokenSymbol === "ETH" || tokenSymbol === "WETH" ? "" : "$"}${p}`}
           >
-            ${p}
+{tokenSymbol === "ETH" || tokenSymbol === "WETH" ? "" : "$"}{p}
           </button>
         ))}
       </div>

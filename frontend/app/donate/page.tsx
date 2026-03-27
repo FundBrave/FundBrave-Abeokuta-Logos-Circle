@@ -126,7 +126,7 @@ export default function DonatePage() {
 
   const isOnForeignChain = !!chain && !isBaseChain(chain.id);
   const isOnUnknownChain = !!chain && !SOURCE_CHAINS.find((c) => c.chainId === chain.id);
-  const displaySymbol = selectedToken.symbol === "WETH" ? "USDT" : selectedToken.symbol;
+  const displaySymbol = selectedToken.symbol;
 
   // FE-H1: Watch `address` (not `isConnected`) so state resets on both disconnect AND wallet switch.
   useEffect(() => {
@@ -282,7 +282,7 @@ export default function DonatePage() {
           {!stats.maxGoalReached && isConnected && !isOnForeignChain && !isOnUnknownChain && (
             <>
               {/* 3. Main Donation Card */}
-              <section className="glass-card rounded-2xl p-8 border border-outline-variant/15 space-y-10 shadow-2xl relative overflow-hidden">
+              <section className="glass-card rounded-2xl p-2 md:p-8 border border-outline-variant/15 space-y-10 shadow-2xl relative overflow-hidden">
                 {/* Decorative Glow */}
                 <div className="absolute -top-24 -right-24 w-64 h-64 bg-primary-container/10 blur-[100px] pointer-events-none" />
                 <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-tertiary-container/10 blur-[100px] pointer-events-none" />

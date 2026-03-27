@@ -5,7 +5,7 @@ import { useGSAP } from "@gsap/react";
 import { gsap } from "../../lib/gsap-config";
 import { animateCounter } from "../../lib/animations";
 import { useCampaignStats } from "../../hooks/useCampaignStats";
-import { CAMPAIGN_GOAL_MIN_USDC } from "../../lib/contracts";
+import { CAMPAIGN_GOAL_MIN_USDC, CAMPAIGN_GOAL_MAX_USDC } from "../../lib/contracts";
 
 export function TransparencyHeroProgress() {
   const stats = useCampaignStats();
@@ -92,10 +92,10 @@ export function TransparencyHeroProgress() {
           </div>
           <div className="text-right">
             <div className="text-sm text-on-surface-variant font-medium mb-1">
-              Target Range
+              Campaign Goal
             </div>
             <div className="text-2xl font-headline font-bold text-white">
-              ${stats.goalMinFormatted} &ndash; ${stats.goalMaxFormatted} USDC
+              ${stats.goalMaxFormatted} USDC
             </div>
           </div>
         </div>
@@ -131,7 +131,7 @@ export function TransparencyHeroProgress() {
             <div
               className="absolute top-0 h-full w-0.5 bg-white/30"
               style={{
-                left: `${(CAMPAIGN_GOAL_MIN_USDC / 2500) * 100}%`,
+                left: `${(CAMPAIGN_GOAL_MIN_USDC / CAMPAIGN_GOAL_MAX_USDC) * 100}%`,
               }}
               title="Minimum Goal"
             />

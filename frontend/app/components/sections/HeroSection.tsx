@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import Link from "next/link";
 import Image from "next/image";
 import { useGSAP } from "@gsap/react";
 import { gsap, ScrollTrigger } from "../../lib/gsap-config";
@@ -60,7 +61,7 @@ export function HeroSection() {
   return (
     <section
       ref={sectionRef}
-      className="relative min-h-[85vh] flex items-center overflow-hidden px-6 lg:px-20 pt-20 pb-40"
+      className="relative min-h-[85vh] flex items-center overflow-hidden px-2 lg:px-20 pt-36 pb-40"
     >
       {/* Background image with gradient overlay */}
       <div ref={bgRef} className="absolute inset-0 z-0">
@@ -97,17 +98,21 @@ export function HeroSection() {
         {/* Subheading */}
         <p className="hero-subtitle text-lg md:text-xl text-on-surface-variant max-w-2xl mb-12 leading-relaxed font-medium">
           Fund online education for 20–30 women entrepreneurs in Abeokuta
-          through the Logos Network, powered by FundBrave.
+          through Logos, powered by FundBrave.
         </p>
 
         {/* CTAs */}
         <div className="flex flex-col sm:flex-row gap-6">
-          <GradientButton size="lg" className="hero-cta">
-            Support the Mission
-          </GradientButton>
-          <GradientButton variant="outline" size="lg" className="hero-cta">
-            View Transparency Report
-          </GradientButton>
+          <Link href="/donate" className="w-full sm:w-auto">
+            <GradientButton size="lg" className="hero-cta w-full sm:w-auto">
+              Support the Mission
+            </GradientButton>
+          </Link>
+          <Link href="/dashboard" className="w-full sm:w-auto">
+            <GradientButton variant="outline" size="lg" className="hero-cta w-full sm:w-auto">
+              View Transparency Report
+            </GradientButton>
+          </Link>
         </div>
       </div>
     </section>
