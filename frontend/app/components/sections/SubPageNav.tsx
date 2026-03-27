@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 
@@ -33,12 +34,28 @@ export function SubPageNav({ backHref = "/", title, navLinks }: SubPageNavProps)
               {title}
             </h1>
           ) : (
-            <div className="font-headline font-bold tracking-tight text-on-surface text-lg flex items-center gap-2">
-              <span className="text-primary-container">FundBrave</span>
-              <span className="text-outline-variant opacity-40 font-light">
-                &times;
+            <div className="flex items-center gap-2.5">
+              <Image
+                src="/images/logo/Fundbrave_icon-gradient.png"
+                alt="FundBrave"
+                width={30}
+                height={30}
+                className="rounded-lg"
+              />
+              <span className="font-headline font-bold tracking-tight text-on-surface text-lg">
+                FundBrave
               </span>
-              <span className="text-on-surface-variant font-medium">Logos</span>
+              <span className="text-outline-variant opacity-40 font-light">&times;</span>
+              <Image
+                src="/images/logo/logos-logo.png"
+                alt="Logos"
+                width={22}
+                height={22}
+                className="rounded-full opacity-80"
+              />
+              <span className="font-headline font-medium text-on-surface-variant text-lg">
+                Logos
+              </span>
             </div>
           )}
         </div>
