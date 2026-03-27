@@ -61,7 +61,7 @@ export function HeroSection() {
   return (
     <section
       ref={sectionRef}
-      className="relative min-h-[85vh] flex items-center overflow-hidden px-2 lg:px-20 pt-36 pb-40"
+      className="relative min-h-[85vh] flex items-center overflow-hidden pt-36 pb-40"
     >
       {/* Background image with gradient overlay */}
       <div ref={bgRef} className="absolute inset-0 z-0">
@@ -75,7 +75,8 @@ export function HeroSection() {
         />
       </div>
 
-      <div className="relative z-20 max-w-4xl">
+      <div className="relative z-20 w-full max-w-[1440px] mx-auto px-2 lg:px-20">
+        <div className="max-w-4xl">
         {/* Campaign badge */}
         <div className="hero-badge flex items-center gap-3 mb-6">
           <span className="bg-surface-container-high text-on-surface-variant px-4 py-1 rounded-full text-[10px] font-bold tracking-[0.2em] uppercase">
@@ -113,6 +114,7 @@ export function HeroSection() {
               View Transparency Report
             </GradientButton>
           </Link>
+        </div>
         </div>
       </div>
     </section>
