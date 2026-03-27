@@ -1,62 +1,64 @@
-# Abeokuta Logos Circle — FundBrave Mini
+# Abeokuta Logos Circle — FundBrave
 
-A focused fundraising app for the **Empowering Women Entrepreneurs in Abeokuta** campaign, built on FundBrave infrastructure in partnership with [Logos Network](https://logos.co).
+A focused fundraising campaign built on FundBrave infrastructure in partnership with [Logos](https://logos.co).
 
-**Goal**: Raise $1,000–$2,500 USDC to fund online education courses (Coursera, Udemy, AltSchool Africa) for 20–30 women entrepreneurs in Abeokuta, Nigeria.
+**Goal**: Raise **$2,000 USDC** to fund online education courses (Coursera, Udemy, AltSchool Africa) for 20–30 women entrepreneurs in Abeokuta, Nigeria.
 
 ---
 
 ## Architecture
 
+Three independently deployed packages:
+
 ```
-packages/abeokuta-mini/
-├── contracts/                      # Solidity smart contracts
+abeokuta-mini/
+├── contracts/                          # Hardhat / Solidity smart contracts (Base)
 │   ├── contracts/
-│   │   ├── AbeokutaCampaign.sol        # Main campaign contract
-│   │   ├── AbeokutaStaking.sol         # Aave-yield staking
-│   │   ├── AbeokutaBridgeReceiver.sol  # Destination-side LayerZero receiver
-│   │   ├── interfaces/                 # ISwapAdapter, IAavePool
-│   │   ├── libraries/                  # CircuitBreaker (reused from FundBrave)
-│   │   └── mocks/                      # MockUSDC, MockAavePool, MockSwapAdapter (tests)
+│   │   ├── AbeokutaCampaign.sol            # Central hub — donation tracking, withdrawals, circuit breaker
+│   │   ├── AbeokutaStaking.sol             # Aave V3 yield staking with per-staker split
+│   │   ├── AbeokutaBridgeReceiver.sol      # LayerZero V2 destination receiver on Base
+│   │   ├── interfaces/                     # ISwapAdapter, IAbeokutaCampaign
+│   │   ├── libraries/                      # CircuitBreaker (reused from FundBrave)
+│   │   └── mocks/                          # MockUSDC, MockAavePool, MockSwapAdapter (tests only)
 │   ├── deploy/
-│   │   └── 01_deploy_abeokuta.js       # Deploys all 3 contracts + wires them together
-│   ├── test/
-│   │   ├── AbeokutaCampaign.test.js
-│   │   └── AbeokutaStaking.test.js
-│   └── hardhat.config.js
+│   │   └── 01_deploy_abeokuta.js           # Deploys all 3 contracts and wires them together
+│   └── test/
+│       ├── AbeokutaCampaign.test.js
+│       ├── AbeokutaStaking.test.js
+│       └── AbeokutaBridgeReceiver.test.js
 │
-├── frontend/                       # Next.js campaign site
+├── frontend/                           # Next.js 15 campaign site
 │   └── app/
-│       ├── page.tsx                    # Landing page (hero + progress + CTAs)
-│       ├── donate/page.tsx             # Donation flow (same-chain + cross-chain)
-│       ├── stake/page.tsx              # Staking flow
-│       ├── dashboard/page.tsx          # Transparency dashboard
+│       ├── page.tsx                        # Landing page (hero + progress + stats + gallery)
+│       ├── donate/page.tsx                 # Donation flow (USDC / ERC20 / ETH / cross-chain)
+│       ├── stake/page.tsx                  # Staking flow (stake / unstake / claim / compound)
+│       ├── dashboard/page.tsx              # Transparency dashboard (on-chain stats + fund flow)
+│       ├── admin/page.tsx                  # Owner-only: withdraw to treasury, harvest yield
 │       ├── hooks/
-│       │   ├── useCampaignStats.ts
-│       │   ├── useDonate.ts
-│       │   ├── useCrossChainDonate.ts  # LayerZero cross-chain donation flow
-│       │   └── useStaking.ts
+│       │   ├── useCampaignStats.ts         # Live campaign + staking stats (multicall, 30s poll)
+│       │   ├── useDonate.ts                # USDC / ERC20 / ETH donation flows
+│       │   ├── useCrossChainDonate.ts      # LayerZero cross-chain donation flow
+│       │   ├── useStaking.ts               # Stake / unstake / claim / compound / split flows
+│       │   └── useAdmin.ts                 # Admin actions with toast notifications
 │       ├── lib/
-│       │   └── contracts.ts            # ABIs, addresses, helpers, getSourceChain()
+│       │   └── contracts.ts                # ABIs, addresses, helpers — single source of truth
 │       └── components/
-│           ├── ProgressBar.tsx
-│           ├── RecentDonations.tsx
-│           ├── CrossChainDonate.tsx    # Cross-chain UI (auto-shown on non-Base chains)
-│           ├── ManualDonations.tsx     # BTC / SOL / direct-EVM donation addresses
-│           ├── StatCard.tsx            # Reusable stat display card
-│           ├── FundBraveLogo.tsx
-│           └── LogosLogo.tsx
+│           ├── RecentDonations.tsx         # Merges on-chain array + cross-chain event logs
+│           ├── CrossChainDonate.tsx        # Cross-chain UI (auto-shown on non-Base wallets)
+│           ├── ManualDonations.tsx         # BTC / SOL copyable deposit addresses
+│           ├── sections/                   # Page sections (Hero, ProgressCard, StatsBar, …)
+│           └── ui/                         # Shared primitives (GradientButton, GlassCard, …)
 │
-└── watcher/                        # Centralized deposit watcher (Node.js / TypeScript)
+└── watcher/                            # Node.js / TypeScript deposit watcher service
     └── src/
-        ├── index.ts                    # Entry point — starts BTC + SOL polling loops
-        ├── config.ts                   # Env-var config loader (no dotenv dep)
-        ├── contract.ts                 # Viem client + donateUSDC() float-wallet helper
-        ├── price.ts                    # CoinGecko price feed (BTC + SOL, cached)
-        ├── store.ts                    # File-backed dedup store (processed_txs.json)
+        ├── index.ts                        # Entry point — starts BTC + SOL polling loops
+        ├── config.ts                       # Env-var config loader (no dotenv)
+        ├── contract.ts                     # Viem client + sequential tx queue (nonce safety)
+        ├── price.ts                        # CoinGecko price feed (BTC + SOL, 60s cache)
+        ├── store.ts                        # File-backed dedup store (processed_txs.json)
         └── watchers/
-            ├── btcWatcher.ts           # Polls Blockstream API for confirmed BTC txs
-            └── solWatcher.ts           # Polls Solana RPC for SOL + USDC-SPL transfers
+            ├── btcWatcher.ts               # Polls Blockstream API for confirmed BTC txs
+            └── solWatcher.ts               # Polls Solana RPC for SOL + USDC-SPL transfers
 ```
 
 ---
@@ -65,23 +67,29 @@ packages/abeokuta-mini/
 
 | Flow | Path | Description |
 |------|------|-------------|
-| USDC (same-chain) | `approve → donateUSDC()` | Direct USDC deposit |
-| ERC20 (same-chain) | `approve → donateERC20(token, amount)` | Auto-swapped to USDC via DEX |
-| ETH (same-chain) | `donateETH{value}()` | Auto-swapped to USDC via DEX |
-| Cross-chain (EVM) | FundBraveBridge → `AbeokutaBridgeReceiver` → `creditDonation()` | LayerZero V2; supports Ethereum, Polygon, Arbitrum, Optimism |
-| Bitcoin | Float-wallet watcher → `donateUSDC()` | Watcher detects confirmed BTC deposits, converts to USDC, credits campaign within minutes |
-| Solana (SOL / USDC-SPL) | Float-wallet watcher → `donateUSDC()` | Same float-wallet pattern for SOL and Solana USDC |
+| USDC (same-chain) | `approve → donateUSDC()` | Direct USDC deposit on Base |
+| ERC20 (same-chain) | `approve → donateERC20(token, amount, minUsdcOut)` | Auto-swapped to USDC via Uniswap V2; 5% slippage floor |
+| ETH (same-chain) | `donateETH{value}(minUsdcOut)` | Auto-swapped WETH→USDC; 5% slippage floor |
+| Cross-chain (EVM) | `FundBraveBridge → AbeokutaBridgeReceiver → creditDonation()` | LayerZero V2; Ethereum, Polygon, Arbitrum, Optimism |
+| Bitcoin | Float-wallet watcher → `donateUSDC()` | Watcher detects confirmed BTC deposits, converts via CoinGecko price, credits within minutes |
+| Solana | Float-wallet watcher → `donateUSDC()` | Same pattern for SOL and Solana USDC-SPL |
+
+Cross-chain donations do **not** appear in the contract's `_allDonations` array (gas optimisation for LayerZero's 200k gasLimit). The frontend reads them directly from `Donated` event logs via `getLogs` and merges them into the Recent Supporters feed.
 
 ---
 
 ## Staking Flow
 
-1. Staker approves USDC for `AbeokutaStaking`
+1. Staker approves USDC → `AbeokutaStaking`
 2. `stake(amount)` → USDC deposited into Aave V3
-3. Yield accrues daily; anyone can call `harvestAndDistribute()`
-4. Yield split: 79% → campaign, 19% → staker, 2% → platform
-5. `claimYield()` → staker receives their 19%
-6. `unstake(amount)` → principal returned instantly
+3. Yield accrues continuously; anyone calls `harvestAndDistribute()`
+4. Default yield split: **79%** → campaign, **19%** → staker, **2%** → platform fee
+5. Per-staker split customisable via `setYieldSplit(causeShare, stakerShare)` (must sum to 9800 bps)
+6. `claimYield()` → staker receives their portion; campaign receives its portion via `creditDonation()`
+7. `compound()` → re-stakes the staker's yield portion instead of withdrawing it
+8. `unstake(amount)` → principal returned instantly from Aave
+
+**Escrowed cause yield (SC-C1):** If the campaign contract rejects a `creditDonation()` call (e.g. campaign ended), the cause yield is escrowed. The staker can call `retryCauseCredit()` to retry, or after a 30-day window, `rescueEscrowedCause()` to recover the yield themselves.
 
 ---
 
@@ -89,39 +97,50 @@ packages/abeokuta-mini/
 
 ```
 Source chain (e.g. Ethereum)
-  └── FundBraveBridge.sendCrossChainAction
+  └── FundBraveBridge.sendCrossChainAction()
         → LayerZero V2 message
-          → Base FundBraveBridge._lzReceive
-            → AbeokutaBridgeReceiver.handleCrossChainDonation
-              → AbeokutaCampaign.creditDonation
+          → Base FundBraveBridge._lzReceive()
+            → AbeokutaBridgeReceiver.receiveCrossChainDonation()
+              → AbeokutaCampaign.creditDonation(donor, amount, sourceChain)
 ```
 
-`AbeokutaBridgeReceiver` sits on Base and is registered as `localFundraiserFactory` on the dedicated Base `FundBraveBridge`. It maps LayerZero EIDs to human-readable chain names (Ethereum, Polygon, Arbitrum, Optimism, Rootstock, and testnets).
-
-**Frontend**: `CrossChainDonate` auto-renders when the user is on a non-Base chain. It quotes the LayerZero fee via `quoteCrossChainAction`, skips the ERC20 `approve` step if allowance is already sufficient, and shows step-by-step progress.
+`AbeokutaBridgeReceiver` sits on Base and maps LayerZero EIDs to chain name strings (e.g. `30101 → "ethereum"`). It is registered as the `localFundraiserFactory` on the Base `FundBraveBridge` deployment.
 
 ---
 
 ## Non-EVM Deposit Watcher
 
-The `watcher/` service bridges Bitcoin and Solana donations into on-chain USDC using the **float wallet** pattern:
+The `watcher/` service bridges Bitcoin and Solana donations to on-chain USDC using the **float wallet** pattern:
 
-1. A dedicated wallet on Base holds pre-approved USDC.
-2. The watcher polls the BTC (Blockstream API) and SOL (Solana JSON-RPC) watch addresses.
-3. On each new confirmed deposit it fetches the live price from CoinGecko, converts to USDC, and calls `donateUSDC()` on the campaign contract.
-4. Processed tx hashes/signatures are persisted to `processed_txs.json` to prevent double-processing across restarts.
+1. A dedicated Base wallet holds pre-approved USDC (`approve(campaign, maxUint256)` — one-time setup).
+2. Watcher polls BTC (Blockstream API, 30s) and SOL (Solana RPC, 10s) watch addresses.
+3. On each new confirmed deposit: fetch live price from CoinGecko → convert to USDC → call `donateUSDCFor(derivedDonorAddress, amount)` using a deterministic pseudo-address (`keccak256("btc:" + senderAddress)`).
+4. Processed tx hashes are persisted to `processed_txs.json` (atomic writes) to prevent double-processing across restarts.
+5. Optional: set `STAKING_ADDRESS` to enable automatic `harvestAndDistribute()` calls on a configurable interval (`HARVEST_INTERVAL_MS`, default 24h).
 
-The frontend `ManualDonations` component displays copyable BTC and SOL addresses so donors without EVM wallets can still contribute.
+> **Float wallet**: keep at least $50–$100 USDC in it and a small ETH balance for gas. Store the private key in a secrets manager — never commit it.
 
 ---
 
 ## Treasury & Multisig
 
-Funds are held by a **Gnosis Safe** multisig (configured as `treasury` in `AbeokutaCampaign`). The campaign contract does not enforce withdrawal signatures itself — it simply sends funds to the Safe address, which requires N-of-M approvals to move.
+Funds are held by a **Gnosis Safe** multisig set as `treasury` in `AbeokutaCampaign`. The contract sends funds to the Safe address; the Safe requires N-of-M approvals to move them.
 
-**Suggested setup**: 2-of-3 Safe with Abeokuta circle leads + Logos Network as signers.
+Suggested setup: **2-of-3 Safe** — Abeokuta circle lead + Logos + community representative.
 
-Set up at https://app.safe.global — choose Base or Base Sepolia.
+Set up at https://app.safe.global (choose Base or Base Sepolia).
+
+---
+
+## Security
+
+- **CircuitBreaker**: max 5,000 USDC/tx · 10,000 USDC/hr · 30,000 USDC/day
+- All donation paths use `nonReentrant`
+- `onlyBridgeOrStaking` gates `creditDonation()` — only registered bridge and staking contracts can call it
+- `AbeokutaBridgeReceiver` is `Pausable` and gated by `onlyBridge`
+- `withdrawToTreasury()` requires campaign ended + minimum goal reached (`GoalNotReached` revert otherwise)
+- If deadline passes without reaching the goal, donors call `claimRefund()` to recover their USDC
+- Slippage protection: `donateERC20` and `donateETH` accept a `minUsdcOut` parameter (frontend passes `expectedOut * 95 / 100`)
 
 ---
 
@@ -129,114 +148,82 @@ Set up at https://app.safe.global — choose Base or Base Sepolia.
 
 ### Prerequisites
 - Node.js 20+
-- A WalletConnect project ID (free at https://cloud.walletconnect.com)
-- An Alchemy API key for Base Sepolia RPC
+- WalletConnect project ID — https://cloud.walletconnect.com
+- Alchemy API key for Base Sepolia / Base mainnet RPC
 
 ### Contracts
 
 ```bash
-cd packages/abeokuta-mini/contracts
+cd contracts
 npm install
-
-# Run tests
-npm test
-
-# Deploy to Base Sepolia (deploys Campaign + Staking + BridgeReceiver and wires them)
-cp ../.env.example .env
-# Edit .env — set PRIVATE_KEY, ALCHEMY_API_KEY, TREASURY_MULTISIG
-npm run deploy:testnet
+npm test                        # run all tests (227 passing)
+npm run deploy:testnet          # deploy to Base Sepolia
+npm run deploy:mainnet          # deploy to Base mainnet
 ```
 
-After deployment, copy the addresses from `deployments/84532.json` into your frontend `.env.local`.
+After deployment, copy addresses from `deployments/{chainId}.json` into `frontend/.env.local`.
 
 ### Frontend
 
 ```bash
-cd packages/abeokuta-mini/frontend
+cd frontend
 npm install
-
-cp ../.env.example .env.local
-# Edit .env.local — set contract addresses + NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
-
-npm run dev   # runs on http://localhost:3002
+cp .env.example .env.local
+# set NEXT_PUBLIC_CAMPAIGN_ADDRESS, NEXT_PUBLIC_STAKING_ADDRESS,
+#     NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID, and per-chain bridge addresses
+npm run dev        # http://localhost:3002
 npm run build
+npm run lint
+npm run type-check
 ```
 
-### Watcher (BTC + SOL deposits)
+### Watcher
 
 ```bash
-cd packages/abeokuta-mini/watcher
+cd watcher
 npm install
-
-cp .env.example .env
-# Edit .env:
-#   BASE_RPC_URL        — Base mainnet or Sepolia RPC
-#   WATCHER_PRIVATE_KEY — Float wallet private key (must hold USDC on Base)
-#   CAMPAIGN_ADDRESS    — Deployed AbeokutaCampaign address
-#   USDC_ADDRESS        — USDC on Base
-#   BTC_ADDRESS         — Bitcoin treasury address to watch (optional)
-#   SOL_ADDRESS         — Solana treasury address to watch (optional)
-
-npm run dev          # dev mode with ts-node
-npm run dev:watch    # dev mode with nodemon restart
-npm run build && npm start  # production
+# set env vars in shell (no .env file — see CLAUDE.md for full list):
+#   BASE_RPC_URL, WATCHER_PRIVATE_KEY, CAMPAIGN_ADDRESS, USDC_ADDRESS
+#   BTC_ADDRESS (optional), SOL_ADDRESS (optional)
+#   STAKING_ADDRESS (optional — enables auto-harvest)
+npm run dev          # ts-node, no compile step
+npm run dev:watch    # nodemon auto-restart
+npm run build && npm start   # production
 ```
-
-> **Float wallet**: The watcher wallet needs enough USDC to cover the donations it credits. Keep at least $50–$100 USDC in it and top it up as needed. It also needs a small amount of ETH for gas.
 
 ---
 
 ## Deployment Checklist
 
 ### Testnet (Base Sepolia)
-- [ ] Deploy contracts (`npm run deploy:testnet`) — deploys Campaign, Staking, BridgeReceiver
-- [ ] Note contract addresses from `deployments/84532.json`
-- [ ] Create Gnosis Safe on Base Sepolia (https://app.safe.global)
-- [ ] Set `TREASURY_MULTISIG` in `.env`
+- [ ] `npm run deploy:testnet` — deploys Campaign, Staking, BridgeReceiver and wires them
+- [ ] Copy addresses from `deployments/84532.json` to `frontend/.env.local`
+- [ ] Create Gnosis Safe on Base Sepolia at https://app.safe.global
 - [ ] Deploy `FundBraveBridge` on Base Sepolia; set `localFundraiserFactory = BridgeReceiver`
-- [ ] If bridge wasn't known at deploy time: `receiver.setBridge(BRIDGE_ADDRESS)`
-- [ ] Deploy `FundBraveBridge` on each source chain; configure `setPeer(BASE_EID, BASE_BRIDGE_ADDR)`
-- [ ] Update frontend `.env.local` with all contract addresses + per-chain bridge addresses
-- [ ] Configure BTC/SOL treasury addresses; update `NEXT_PUBLIC_BTC_ADDRESS` / `NEXT_PUBLIC_SOL_ADDRESS`
-- [ ] Fund the watcher float wallet with USDC + ETH; start the watcher service
-- [ ] Test all flows end-to-end: USDC donation, ERC20 swap donation, cross-chain donation, staking, yield harvest, BTC/SOL watcher
+- [ ] Deploy `FundBraveBridge` on each source chain; `setPeer(BASE_EID, BASE_BRIDGE_ADDR)`
+- [ ] Update `frontend/.env.local` with all bridge addresses per source chain
+- [ ] Set `AbeokutaStaking.setStakingDeadline(campaignDeadline)` after deployment
+- [ ] Fund float wallet with USDC + ETH; run one-time `approve(campaign, maxUint256)`; start watcher
+- [ ] Test all flows: USDC, ERC20 swap, ETH swap, cross-chain, BTC/SOL watcher, staking, harvest, refund
 - [ ] Verify contracts on BaseScan: `npm run verify`
 
 ### Mainnet (Base)
 - [ ] Repeat above with `npm run deploy:mainnet`
-- [ ] Create mainnet Gnosis Safe with 3 real signers (Abeokuta leads + Logos)
-- [ ] Use `2-of-3` threshold
-- [ ] Test with small amounts first
-- [ ] Share Safe URL with all signers
-
----
-
-## Security Notes
-
-- `AbeokutaCampaign` uses the `CircuitBreaker` library from FundBrave:
-  - Max single donation: 5,000 USDC
-  - Max hourly: 10,000 USDC
-  - Max daily: 30,000 USDC
-- All donation paths use `nonReentrant`
-- `AbeokutaBridgeReceiver` is `Pausable` and gated by `onlyBridge`; only the registered `FundBraveBridge` on Base can call it
-- The bridge/staking pool authorization is access-controlled via `onlyBridgeOrStaking` on the campaign
-- `withdrawToTreasury()` can only be called by the treasury multisig or owner
-- Withdrawal is blocked if campaign is still active and min goal not reached
-- Watcher float wallet: keep its private key in a secure secrets manager (not in version control); it only needs `donateUSDC` permission — never grant it campaign admin rights
+- [ ] Create mainnet Gnosis Safe with 3 real signers; use 2-of-3 threshold
+- [ ] Test with small amounts first before publicising
 
 ---
 
 ## Reused from FundBrave
 
-| Component | Source | Notes |
-|-----------|--------|-------|
-| `CircuitBreaker.sol` | `packages/contracts/contracts/libraries/` | Copied verbatim |
-| `FundBraveBridge.sol` | `packages/contracts/contracts/` | Reused as-is; `AbeokutaBridgeReceiver` registered as `localFundraiserFactory` |
-| `UniswapAdapter.sol` / `OneInchAdapter.sol` | `packages/contracts/contracts/adapters/` | Use existing deployed instance |
-| `WalletProvider` (RainbowKit + wagmi) | `packages/frontend/app/provider/WalletProvider.tsx` | Adapted in `providers.tsx` |
-| CSS variables / design system | `packages/frontend/app/globals.css` | Same `--primary`, `--purple`, `glass` tokens |
-| `useDonate` / `useStake` hooks | `packages/frontend/app/hooks/` | Adapted for standalone campaign |
+| Component | Notes |
+|-----------|-------|
+| `CircuitBreaker.sol` | Copied verbatim into `contracts/libraries/` |
+| `FundBraveBridge.sol` | External deployment; `AbeokutaBridgeReceiver` registered as `localFundraiserFactory` |
+| `ISwapAdapter` | Uniswap V2 router used in Campaign for ERC20/ETH → USDC swaps |
+| RainbowKit + wagmi stack | Adapted in `providers.tsx` with explicit per-chain transports |
+| Design system tokens | `--primary`, `--secondary`, `glass`, `gradient-text` from FundBrave globals |
 
 ---
 
-*Built with ❤️ for the Abeokuta community.*
+*Built for the Abeokuta community — powered by FundBrave × Logos.*
