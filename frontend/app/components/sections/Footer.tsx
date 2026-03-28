@@ -1,21 +1,37 @@
 "use client";
 
+import { useCallback } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { gsap } from "../../lib/gsap-config";
 import { useScrollReveal } from "../../hooks/useScrollReveal";
 
 const FOOTER_LINKS = [
-  { label: "Whitepaper", href: "#" },
+  { label: "Donate", href: "/donate" },
   { label: "Transparency", href: "/dashboard" },
-  { label: "Vault Governance", href: "#" },
+  { label: "Stake", href: "/stake" },
 ] as const;
 
 export function Footer() {
   const ref = useScrollReveal<HTMLElement>({ y: 20, duration: 0.5 });
 
+  const handleMouseEnter = useCallback((e: React.MouseEvent) => {
+    const underline = e.currentTarget.querySelector(".nav-underline");
+    if (underline) {
+      gsap.to(underline, { scaleX: 1, duration: 0.3, ease: "power2.out", overwrite: true });
+    }
+  }, []);
+
+  const handleMouseLeave = useCallback((e: React.MouseEvent) => {
+    const underline = e.currentTarget.querySelector(".nav-underline");
+    if (underline) {
+      gsap.to(underline, { scaleX: 0, duration: 0.3, ease: "power2.in", overwrite: true });
+    }
+  }, []);
+
   return (
     <footer ref={ref} className="bg-[#050810] w-full py-20 border-t border-outline-variant/10 mt-20">
-      <div className="max-w-[1440px] mx-auto px-2 lg:px-20">
+      <div className="max-w-[1440px] mx-auto px-6 lg:px-20">
         <div className="flex flex-col md:flex-row justify-between items-center gap-12 mb-16">
           <div className="flex items-center gap-4">
             <Image
@@ -45,9 +61,12 @@ export function Footer() {
               <Link
                 key={link.label}
                 href={link.href}
-                className="text-sm text-on-surface-variant hover:text-primary transition-all font-bold uppercase tracking-widest"
+                className="relative text-sm text-on-surface-variant hover:text-primary transition-colors font-bold uppercase tracking-widest pb-1"
+                onMouseEnter={handleMouseEnter}
+                onMouseLeave={handleMouseLeave}
               >
                 {link.label}
+                <span className="nav-underline absolute bottom-0 left-0 w-full h-0.5 bg-gradient-to-r from-primary-container to-secondary-container origin-left scale-x-0" />
               </Link>
             ))}
           </div>

@@ -11,7 +11,10 @@ if (typeof window !== "undefined") {
   const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   const applyMotionPreference = (reduced: boolean) => {
-    gsap.globalTimeline.timeScale(reduced ? 0 : 1);
+    // timeScale(0) freezes animations at their initial state (opacity:0, scale:0),
+    // making content permanently invisible. Use a very high value instead so
+    // all animations complete instantly — content is visible, motion is skipped.
+    gsap.globalTimeline.timeScale(reduced ? 999 : 1);
   };
 
   applyMotionPreference(mql.matches);

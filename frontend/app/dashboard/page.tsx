@@ -12,8 +12,8 @@ import { TransparencyBackgroundDecoration } from "../components/sections/Transpa
 import { Footer } from "../components/sections/Footer";
 
 const NAV_LINKS = [
-  { label: "Transparency", href: "/dashboard", active: true },
-  { label: "Governance", href: "#", active: false },
+  { label: "Donate", href: "/donate" },
+  { label: "Stake", href: "/stake" },
 ];
 
 export default function DashboardPage() {

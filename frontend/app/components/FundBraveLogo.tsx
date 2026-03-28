@@ -1,37 +1,15 @@
-interface Props { className?: string }
+import Image from "next/image";
 
-/**
- * FundBrave wordmark rendered as inline SVG — no external image dependency.
- */
-export function FundBraveLogo({ className = "h-8" }: Props) {
+interface Props { className?: string; size?: number }
+
+export function FundBraveLogo({ className = "", size = 36 }: Props) {
   return (
-    <svg
-      viewBox="0 0 160 36"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className={className}
-      aria-label="FundBrave"
-    >
-      {/* Icon mark */}
-      <rect x="0" y="4" width="28" height="28" rx="7" fill="#2563EB" />
-      <path
-        d="M8 22 L14 12 L20 18 L24 14"
-        stroke="white"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {/* Wordmark */}
-      <text
-        x="36"
-        y="26"
-        fontFamily="system-ui, sans-serif"
-        fontWeight="700"
-        fontSize="18"
-        fill="white"
-      >
-        FundBrave
-      </text>
-    </svg>
+    <Image
+      src="/images/logo/Fundbrave_icon-gradient.png"
+      alt="FundBrave"
+      width={size}
+      height={size}
+      className={`rounded-lg ${className}`}
+    />
   );
 }

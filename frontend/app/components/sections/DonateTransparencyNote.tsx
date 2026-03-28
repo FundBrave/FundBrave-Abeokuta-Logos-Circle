@@ -1,8 +1,12 @@
 "use client";
 
+import { useScrollReveal } from "../../hooks/useScrollReveal";
+
 export function DonateTransparencyNote() {
+  const ref = useScrollReveal<HTMLDivElement>({ y: 25, duration: 0.5 });
+
   return (
-    <div className="p-6 rounded-xl bg-surface-container-high/30 border border-outline-variant/10 space-y-3">
+    <div ref={ref} className="p-6 rounded-xl bg-surface-container-high/30 border border-outline-variant/10 space-y-3">
       <div className="flex gap-3 text-tertiary">
         <span className="material-symbols-outlined">security</span>
         <h4 className="font-bold text-sm">Transparency Promise</h4>
