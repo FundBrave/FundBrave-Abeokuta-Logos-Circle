@@ -10,7 +10,6 @@ import { gsap } from "../../lib/gsap-config";
 interface NavLink {
   label: string;
   href: string;
-  active?: boolean;
 }
 
 interface SubPageNavProps {

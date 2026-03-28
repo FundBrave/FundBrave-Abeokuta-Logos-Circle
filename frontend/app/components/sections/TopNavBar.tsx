@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useGSAP } from "@gsap/react";
 import { gsap } from "../../lib/gsap-config";
@@ -17,6 +18,7 @@ const NAV_LINKS = [
 export function TopNavBar() {
   const [scrolled, setScrolled] = useState(false);
   const navRef = useRef<HTMLElement>(null);
+  const pathname = usePathname();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 10);
@@ -80,18 +82,27 @@ export function TopNavBar() {
 
         {/* Center: Nav links */}
         <div className="hidden md:flex gap-6 font-medium tracking-tight absolute left-1/2 -translate-x-1/2">
-          {NAV_LINKS.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="relative pb-1 text-[#dfe2f3]/60 hover:text-[#dfe2f3] transition-colors"
-              onMouseEnter={handleMouseEnter}
-              onMouseLeave={handleMouseLeave}
-            >
-              {link.label}
-              <span className="nav-underline absolute bottom-0 left-0 w-full h-0.5 bg-gradient-to-r from-primary-container to-secondary-container origin-left scale-x-0" />
-            </Link>
-          ))}
+          {NAV_LINKS.map((link) => {
+            const isActive = pathname === link.href;
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`relative pb-1 transition-colors ${
+                  isActive ? "text-[#dfe2f3]" : "text-[#dfe2f3]/60 hover:text-[#dfe2f3]"
+                }`}
+                onMouseEnter={isActive ? undefined : handleMouseEnter}
+                onMouseLeave={isActive ? undefined : handleMouseLeave}
+              >
+                {link.label}
+                <span
+                  className={`nav-underline absolute bottom-0 left-0 w-full h-0.5 bg-gradient-to-r from-primary-container to-secondary-container origin-left ${
+                    isActive ? "scale-x-100" : "scale-x-0"
+                  }`}
+                />
+              </Link>
+            );
+          })}
         </div>
 
         {/* Right: Wallet */}
