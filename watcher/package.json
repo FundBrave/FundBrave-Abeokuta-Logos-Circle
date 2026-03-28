@@ -6,8 +6,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node --esm src/index.ts",
-    "dev:watch": "nodemon --exec ts-node --esm src/index.ts",
+    "dev": "ts-node src/index.ts",
+    "dev:watch": "nodemon --exec \"ts-node src/index.ts\"",
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
     "test": "echo 'No automated tests yet — see SECURITY_AUDIT_REPORT.md informational section' && exit 0"
   },
