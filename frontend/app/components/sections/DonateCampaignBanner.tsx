@@ -10,12 +10,19 @@ export function DonateCampaignBanner() {
   const stats = useCampaignStats();
   const bannerRef = useScrollReveal<HTMLDivElement>({ y: 20, duration: 0.5 });
   const barRef = useRef<HTMLDivElement>(null);
+  const hasAnimated = useRef(false);
 
   const progressPercent = stats.progressPercent;
 
   useGSAP(
     () => {
       if (!barRef.current || progressPercent <= 0) return;
+      if (hasAnimated.current) {
+        // Subsequent refetches (every 30s) — update width instantly, no re-animation
+        gsap.set(barRef.current, { width: `${Math.min(progressPercent, 100)}%` });
+        return;
+      }
+      hasAnimated.current = true;
       gsap.fromTo(
         barRef.current,
         { width: "0%" },
