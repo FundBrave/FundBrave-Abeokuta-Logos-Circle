@@ -259,7 +259,7 @@ export function useCrossChainDonate(): CrossChainDonateState {
     lzFeeEth,
     txHash,
     errorMsg,
-    isProcessing: step === "quoting" || step === "approving" || step === "sending" || step === "confirming",
+    isProcessing: step === "approving" || step === "sending" || step === "confirming",
     quote,
     execute,
     executeNative,
