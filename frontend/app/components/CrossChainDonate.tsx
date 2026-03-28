@@ -24,9 +24,9 @@ import {
   Zap,
   Info,
 } from "lucide-react";
-import { useAccount, useBalance } from "wagmi";
+import { useAccount, useBalance, useReadContract } from "wagmi";
 import { useCrossChainDonate } from "../hooks/useCrossChainDonate";
-import { USDC_DECIMALS, getExplorerUrl } from "../lib/contracts";
+import { USDC_DECIMALS, ERC20_ABI, getExplorerUrl, getSourceChain } from "../lib/contracts";
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -69,6 +69,20 @@ export function CrossChainDonate({ onSuccess }: Props) {
     chainId: chain?.id,
     query:   { enabled: !!address, refetchInterval: 10_000 },
   });
+
+  // USDC balance on the current source chain
+  const srcUsdcAddress = chain ? getSourceChain(chain.id)?.usdcAddress : undefined;
+  const { data: usdcBalanceRaw } = useReadContract({
+    address:      srcUsdcAddress,
+    abi:          ERC20_ABI,
+    functionName: "balanceOf",
+    args:         address ? [address] : undefined,
+    chainId:      chain?.id,
+    query:        { enabled: !!address && !!srcUsdcAddress, refetchInterval: 10_000 },
+  });
+  const usdcFormatted = usdcBalanceRaw !== undefined
+    ? (Number(usdcBalanceRaw) / 10 ** USDC_DECIMALS).toFixed(2)
+    : null;
 
   // ETH price for USD equivalent display
   useEffect(() => {
@@ -255,6 +269,16 @@ export function CrossChainDonate({ onSuccess }: Props) {
         <p className="text-xs text-white/30 text-center -mt-2">
           {nativeSymbol} cross-chain requires mainnet bridge liquidity · use USDC on testnet
         </p>
+      )}
+
+      {/* USDC balance (USDC mode) */}
+      {mode === "usdc" && usdcFormatted !== null && (
+        <div className="flex items-center justify-between bg-white/5 rounded-xl px-4 py-2.5">
+          <span className="text-xs text-white/40">Your USDC balance</span>
+          <span className="text-sm font-medium text-white">
+            {usdcFormatted} USDC
+          </span>
+        </div>
       )}
 
       {/* Native balance (ETH mode) */}
