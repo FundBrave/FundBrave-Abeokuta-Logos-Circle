@@ -1,5 +1,9 @@
 "use client";
 
+import { useRef } from "react";
+import { useGSAP } from "@gsap/react";
+import { gsap } from "../../lib/gsap-config";
+
 interface DonateSummaryCardProps {
   amount: string;
   tokenSymbol: string;
@@ -9,13 +13,25 @@ export function DonateSummaryCard({
   amount,
   tokenSymbol,
 }: DonateSummaryCardProps) {
+  const cardRef = useRef<HTMLDivElement>(null);
   const displaySymbol = tokenSymbol;
   const numAmount = parseFloat(amount) || 0;
-  // Estimate: campaign receives amount minus small gas overhead
   const netAmount = Math.max(numAmount - 0.15, 0).toFixed(2);
 
+  useGSAP(
+    () => {
+      if (!cardRef.current) return;
+      gsap.fromTo(
+        cardRef.current,
+        { y: -15, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.4, ease: "power2.out" }
+      );
+    },
+    { dependencies: [], scope: cardRef }
+  );
+
   return (
-    <div className="bg-surface-container-low/50 rounded-xl p-5 border border-outline-variant/10 space-y-3">
+    <div ref={cardRef} className="bg-surface-container-low/50 rounded-xl p-5 border border-outline-variant/10 space-y-3">
       <div className="flex justify-between items-center text-sm">
         <span className="text-on-surface-variant">You donate</span>
         <span className="font-bold">
