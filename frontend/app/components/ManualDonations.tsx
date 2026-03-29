@@ -1,5 +1,7 @@
 "use client";
 
+import { TokenIcon } from "./ui/TokenIcon";
+
 /**
  * ManualDonations
  *
@@ -192,11 +194,7 @@ export function ManualDonations() {
 
       {/* Contract address — any EVM wallet */}
       <DonationCard
-        icon={
-          <div className="w-6 h-6 rounded-full bg-[#2563EB]/40 flex items-center justify-center flex-shrink-0">
-            <span className="text-[10px] font-bold text-[#2563EB]">EVM</span>
-          </div>
-        }
+        icon={<TokenIcon symbol="USDC" size={24} />}
         title="Send USDC directly"
         subtitle="Any EVM wallet · Base Sepolia"
         accent="border-[#2563EB]"
@@ -207,7 +205,7 @@ export function ManualDonations() {
 
       {/* Bitcoin */}
       <DonationCard
-        icon={<BitcoinIcon />}
+        icon={<TokenIcon symbol="BTC" size={24} />}
         title="Donate with Bitcoin"
         subtitle="BTC · Native Bitcoin network"
         accent="border-[#F7931A]"
@@ -218,7 +216,7 @@ export function ManualDonations() {
 
       {/* Solana */}
       <DonationCard
-        icon={<SolanaIcon />}
+        icon={<TokenIcon symbol="SOL" size={24} />}
         title="Donate with Solana"
         subtitle="SOL or USDC-SPL · Solana network"
         accent="border-[#9945FF]"

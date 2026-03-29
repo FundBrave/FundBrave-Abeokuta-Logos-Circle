@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { TokenIcon } from "../ui/TokenIcon";
 
 const SUPPORTED_CHAINS = [
-  { name: "Ethereum",        icon: "⟠" },
-  { name: "Polygon",         icon: "🟣" },
-  { name: "Arbitrum",        icon: "🔷" },
-  { name: "Optimism",        icon: "🔴" },
+  { name: "Ethereum",        icon: "ETH" },
+  { name: "Polygon",         icon: "POLYGON" },
+  { name: "Arbitrum",        icon: "ARBITRUM" },
+  { name: "Optimism",        icon: "OPTIMISM" },
 ];
 
 export function DonateCrossChainInfo() {
@@ -49,7 +50,7 @@ export function DonateCrossChainInfo() {
                 key={c.name}
                 className="flex items-center gap-1.5 text-xs bg-surface-container-high px-3 py-1 rounded-full border border-outline-variant/15 text-on-surface-variant"
               >
-                <span>{c.icon}</span>
+                <TokenIcon symbol={c.icon} size={16} />
                 {c.name}
               </span>
             ))}

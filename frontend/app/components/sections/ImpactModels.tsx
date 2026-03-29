@@ -5,14 +5,15 @@ import Link from "next/link";
 import { useGSAP } from "@gsap/react";
 import { gsap } from "../../lib/gsap-config";
 import { animateSectionEntrance } from "../../lib/animations";
+import { TokenIcon } from "../ui/TokenIcon";
 
 const CHAINS = [
-  { label: "Ethereum", icon: "⟠" },
-  { label: "Polygon",  icon: "🟣" },
-  { label: "Arbitrum", icon: "🔷" },
-  { label: "Optimism", icon: "🔴" },
-  { label: "Bitcoin",  icon: "₿"  },
-  { label: "Solana",   icon: "◎"  },
+  { label: "Ethereum", icon: "ETH" },
+  { label: "Polygon",  icon: "POLYGON" },
+  { label: "Arbitrum", icon: "ARBITRUM" },
+  { label: "Optimism", icon: "OPTIMISM" },
+  { label: "Bitcoin",  icon: "BTC" },
+  { label: "Solana",   icon: "SOL" },
 ];
 
 export function ImpactModels() {
@@ -90,7 +91,7 @@ export function ImpactModels() {
               <div className="flex flex-wrap gap-2">
                 {CHAINS.map((c) => (
                   <span key={c.label} title={c.label} className="flex items-center gap-1.5 text-xs bg-surface-container-high/60 border border-outline-variant/15 text-on-surface-variant px-2.5 py-1 rounded-full">
-                    <span className="text-sm">{c.icon}</span>
+                    <TokenIcon symbol={c.icon} size={14} />
                     {c.label}
                   </span>
                 ))}
