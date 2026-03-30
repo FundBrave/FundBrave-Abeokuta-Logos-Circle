@@ -70,7 +70,7 @@ abeokuta-mini/
 | USDC (same-chain) | `approve → donateUSDC()` | Direct USDC deposit on Base |
 | ERC20 (same-chain) | `approve → donateERC20(token, amount, minUsdcOut)` | Auto-swapped to USDC via Uniswap V2; 5% slippage floor |
 | ETH (same-chain) | `donateETH{value}(minUsdcOut)` | Auto-swapped WETH→USDC; 5% slippage floor |
-| Cross-chain (EVM) | `FundBraveBridge → AbeokutaBridgeReceiver → creditDonation()` | LayerZero V2; Ethereum, Polygon, Arbitrum, Optimism |
+| Cross-chain (EVM) | `FundBraveBridge → AbeokutaBridgeReceiver → creditDonation()` | LayerZero V2; Ethereum, Polygon, Arbitrum, Optimism, Status Network (bridge pending LZ deployment) |
 | Bitcoin | Float-wallet watcher → `donateUSDC()` | Watcher detects confirmed BTC deposits, converts via CoinGecko price, credits within minutes |
 | Solana | Float-wallet watcher → `donateUSDC()` | Same pattern for SOL and Solana USDC-SPL |
 
@@ -206,6 +206,15 @@ npm run build && npm start   # production
 - [ ] Fund float wallet with USDC + ETH; run one-time `approve(campaign, maxUint256)`; start watcher
 - [ ] Test all flows: USDC, ERC20 swap, ETH swap, cross-chain, BTC/SOL watcher, staking, harvest, refund
 - [ ] Verify contracts on BaseScan: `npm run verify`
+
+### Status Network Testnet
+- [ ] Get testnet ETH: bridge Sepolia ETH at https://bridge.status.network
+- [ ] `npx hardhat run deploy/28_deploy_status_network.js --network statusNetworkTestnet`
+- [ ] Copy addresses from `deployments/1660990954.json` to `frontend/.env.local`:
+  - `NEXT_PUBLIC_STATUS_CAMPAIGN_ADDRESS`
+  - `NEXT_PUBLIC_STATUS_USDC_ADDRESS`
+- [ ] Verify contracts on Blockscout: `npx hardhat verify --network statusNetworkTestnet <address> <args>`
+- [ ] *(Future)* Once LayerZero V2 is deployed on Status Network: deploy `FundBraveBridge` there, set `NEXT_PUBLIC_BRIDGE_STATUS_ADDRESS` to enable cross-chain donations
 
 ### Mainnet (Base)
 - [ ] Repeat above with `npm run deploy:mainnet`
