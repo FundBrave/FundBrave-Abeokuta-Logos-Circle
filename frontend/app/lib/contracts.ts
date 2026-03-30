@@ -220,7 +220,24 @@ export const SOURCE_CHAINS: SourceChain[] = [
     bridgeAddress:  (process.env.NEXT_PUBLIC_BRIDGE_OPTIMISM_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
     nativeCurrency: "ETH",
   },
-  // ── Testnet source chains (only active when targeting Base Sepolia) ──────────
+  // ── Status Network Testnet ───────────────────────────────────────────────────
+  // Logos/Status L2 testnet. LayerZero V2 is not yet deployed on Status Network,
+  // so bridgeAddress defaults to zero — the UI shows a "bridge not configured" banner.
+  // Once LZ is available: deploy FundBraveBridge on Status Network and set
+  // NEXT_PUBLIC_BRIDGE_STATUS_ADDRESS to enable cross-chain donations from there.
+  ...((TARGET_CHAIN_ID as number) === 84532 ? [
+    {
+      name:           "Status Network",
+      chainId:        1660990954,
+      lzEid:          0,   // LayerZero endpoint not yet deployed on Status Network testnet
+      icon:           "🔷",
+      usdcAddress:    (process.env.NEXT_PUBLIC_STATUS_USDC_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
+      bridgeAddress:  (process.env.NEXT_PUBLIC_BRIDGE_STATUS_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
+      nativeCurrency: "ETH",
+    },
+  ] as SourceChain[] : []),
+
+  // ── Other testnet source chains (only active when targeting Base Sepolia) ────
   // These use the mock USDC and FundBraveBridge deployed by 02_deploy_source_bridge.js.
   // Included here so getSourceChain(11155111/11155420) resolves correctly when a user
   // switches to these chains in the testnet donate flow.

@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { useAccount, useBalance, useReadContract } from "wagmi";
 import { useCrossChainDonate } from "../hooks/useCrossChainDonate";
-import { USDC_DECIMALS, ERC20_ABI, getExplorerUrl, getSourceChain } from "../lib/contracts";
+import { USDC_DECIMALS, ERC20_ABI, getSourceChain, getExplorerUrl } from "../lib/contracts";
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -81,7 +81,7 @@ export function CrossChainDonate({ onSuccess }: Props) {
     query:        { enabled: !!address && !!srcUsdcAddress, refetchInterval: 10_000 },
   });
   const usdcFormatted = usdcBalanceRaw !== undefined
-    ? (Number(usdcBalanceRaw) / 10 ** USDC_DECIMALS).toFixed(2)
+    ? (Number(usdcBalanceRaw as bigint) / 10 ** USDC_DECIMALS).toFixed(2)
     : null;
 
   // ETH price for USD equivalent display
@@ -298,12 +298,15 @@ export function CrossChainDonate({ onSuccess }: Props) {
         </label>
         <div className="relative">
           <input
-            type="number"
+            type="text"
+            inputMode="decimal"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => {
+              const sanitized = e.target.value.replace(/[^0-9.]/g, "");
+              const parts = sanitized.split(".");
+              setAmount(parts.length > 2 ? parts[0] + "." + parts.slice(1).join("") : sanitized);
+            }}
             placeholder="0.00"
-            min="0"
-            step="any"
             disabled={showSteps}
             className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-lg font-medium focus:outline-none focus:border-[#2563EB] transition-colors pr-20 disabled:opacity-50"
           />
