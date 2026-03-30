@@ -52,12 +52,21 @@ module.exports = {
       chainId: 11155420,
       timeout: 120000,
     },
+
+    // Status Network Testnet (Sepolia-based L2 by Logos/Status)
+    statusNetworkTestnet: {
+      url: process.env.STATUS_NETWORK_RPC || "https://public.sepolia.rpc.status.network",
+      accounts: [PRIVATE_KEY],
+      chainId: 1660990954,
+      timeout: 120000,
+    },
   },
 
   etherscan: {
     apiKey: {
       baseSepolia: BASESCAN_API_KEY,
       base: BASESCAN_API_KEY,
+      statusNetworkTestnet: "no-api-key-needed",  // Blockscout doesn't require an API key
     },
     customChains: [
       {
@@ -66,6 +75,14 @@ module.exports = {
         urls: {
           apiURL: "https://api-sepolia.basescan.org/api",
           browserURL: "https://sepolia.basescan.org",
+        },
+      },
+      {
+        network: "statusNetworkTestnet",
+        chainId: 1660990954,
+        urls: {
+          apiURL: "https://sepoliascan.status.network/api",
+          browserURL: "https://sepoliascan.status.network",
         },
       },
     ],
