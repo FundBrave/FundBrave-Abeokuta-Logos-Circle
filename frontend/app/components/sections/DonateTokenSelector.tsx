@@ -1,13 +1,7 @@
 "use client";
 
 import type { TokenInfo } from "../../lib/contracts";
-
-const TOKEN_ICONS: Record<string, string> = {
-  USDC: "monetization_on",
-  ETH: "eco",
-  DAI: "toll",
-  WETH: "currency_exchange",
-};
+import { TokenIcon } from "../ui/TokenIcon";
 
 interface DonateTokenSelectorProps {
   tokens: readonly TokenInfo[];
@@ -28,8 +22,6 @@ export function DonateTokenSelector({
       <div className="flex flex-wrap gap-3">
         {tokens.map((token) => {
           const isSelected = selectedToken.symbol === token.symbol;
-          const displaySymbol =
-            token.symbol;
           return (
             <button
               key={token.symbol}
@@ -39,12 +31,10 @@ export function DonateTokenSelector({
                   ? "bg-tertiary text-on-tertiary shadow-[0_0_20px_rgba(255,182,144,0.3)]"
                   : "bg-surface-container-high text-on-surface-variant hover:text-on-surface border border-outline-variant/20"
               }`}
-              aria-label={`Select ${displaySymbol}`}
+              aria-label={`Select ${token.symbol}`}
             >
-              <span className="material-symbols-outlined text-sm">
-                {TOKEN_ICONS[token.symbol] || "toll"}
-              </span>
-              {displaySymbol}
+              <TokenIcon symbol={token.symbol} size={18} />
+              {token.symbol}
             </button>
           );
         })}

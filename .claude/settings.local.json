@@ -20,7 +20,8 @@
       "mcp__stitch__get_project",
       "WebSearch",
       "Bash(git checkout:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(grep -r \"hidden md:flex\\\\|hidden sm:\\\\|lg:px\\\\|md:p\" /c/Users/johnn/Desktop/FundBrave-Abeokuta-Logos-Circle/frontend/app/components/sections/*.tsx)"
     ]
   }
 }

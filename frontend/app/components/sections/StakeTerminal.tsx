@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { getExplorerUrl, formatUSDC, STAKE_PRESETS } from "../../lib/contracts";
 import { useScrollReveal } from "../../hooks/useScrollReveal";
+import { TokenIcon } from "../ui/TokenIcon";
 
 interface StakeTerminalProps {
   isConnected: boolean;
@@ -147,9 +148,7 @@ export function StakeTerminal({
               }}
             />
             <div className="flex items-center gap-2 bg-surface-container-high py-2 px-3 rounded-xl">
-              <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center text-[10px] font-black text-white">
-                $
-              </div>
+              <TokenIcon symbol="USDC" size={24} />
               <span className="font-bold text-on-surface">USDC</span>
             </div>
           </div>
