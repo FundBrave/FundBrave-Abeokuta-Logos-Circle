@@ -22,11 +22,23 @@ import * as path from "path";
 import { config } from "./config";
 import { logger } from "./logger";
 
+// F-009: Pending entry now stores the Base tx hash for reliable crash recovery.
+// baseTxHash is set after writeContract() so that on restart we can check receipt
+// directly rather than scanning event logs by estimated block range.
+interface PendingEntry {
+  startedAt:   number;        // unix ms when donation was started
+  baseTxHash?: string;        // Base tx hash, set after writeContract() succeeds
+}
+
 interface StoreData {
-  btcTxs:     string[];               // fully processed
-  solTxs:     string[];               // fully processed
-  btcPending: Record<string, number>; // txid → startedAt (unix ms)
-  solPending: Record<string, number>; // sig  → startedAt (unix ms)
+  btcTxs:              string[];                      // fully processed
+  solTxs:              string[];                      // fully processed
+  btcPending:          Record<string, PendingEntry>;  // txid → pending entry
+  solPending:          Record<string, PendingEntry>;  // sig  → pending entry
+  // F-008: Last Solana signature fully processed in the previous poll cycle.
+  // Used as the `until` cursor so each poll only fetches sigs newer than this,
+  // preventing spam transactions from pushing legitimate deposits out of the scan window.
+  lastSolCheckpointSig: string | null;
 }
 
 // In-memory authoritative Sets — populated from disk at startup,
@@ -45,17 +57,37 @@ function _enqueue<T>(fn: () => T | Promise<T>): Promise<T> {
   });
 }
 
+/**
+ * Normalise a raw pending record from disk, handling both old format (number)
+ * and new format (PendingEntry object). This allows graceful upgrade from the
+ * previous store schema without needing a migration script.
+ */
+function _normalisePending(raw: Record<string, unknown>): Record<string, PendingEntry> {
+  const out: Record<string, PendingEntry> = {};
+  for (const [key, val] of Object.entries(raw)) {
+    if (typeof val === "number") {
+      // Old format: txid → startedAt (number)
+      out[key] = { startedAt: val };
+    } else if (val && typeof val === "object" && "startedAt" in val) {
+      // New format: txid → PendingEntry
+      out[key] = val as PendingEntry;
+    }
+  }
+  return out;
+}
+
 function _readFromDisk(): StoreData {
   try {
     const raw = JSON.parse(fs.readFileSync(config.storeFile, "utf8"));
     return {
-      btcTxs:     raw.btcTxs     ?? [],
-      solTxs:     raw.solTxs     ?? [],
-      btcPending: raw.btcPending ?? {},
-      solPending: raw.solPending ?? {},
+      btcTxs:              raw.btcTxs              ?? [],
+      solTxs:              raw.solTxs              ?? [],
+      btcPending:          _normalisePending(raw.btcPending ?? {}),
+      solPending:          _normalisePending(raw.solPending ?? {}),
+      lastSolCheckpointSig: raw.lastSolCheckpointSig ?? null,
     };
   } catch {
-    return { btcTxs: [], solTxs: [], btcPending: {}, solPending: {} };
+    return { btcTxs: [], solTxs: [], btcPending: {}, solPending: {}, lastSolCheckpointSig: null };
   }
 }
 
@@ -145,8 +177,8 @@ function _cleanOrphanedTempFiles(): void {
 // ── Stale pending entry resolution ───────────────────────────────────────────
 
 // Saved at initStore() time for use by verifyAndResolveStalePending()
-let _staleBtcPending: Record<string, number> = {};
-let _staleSolPending: Record<string, number> = {};
+let _staleBtcPending: Record<string, PendingEntry> = {};
+let _staleSolPending: Record<string, PendingEntry> = {};
 
 /**
  * On restart, stale pending entries are saved for async verification.
@@ -156,17 +188,19 @@ let _staleSolPending: Record<string, number> = {};
  */
 function _captureStalePending(data: StoreData): void {
   const now = Date.now();
-  for (const [txid, startedAt] of Object.entries(data.btcPending)) {
+  for (const [txid, entry] of Object.entries(data.btcPending)) {
     logger.warn("[store] Found in-flight BTC tx from previous run — verifying on-chain", {
-      txid, ageSec: Math.floor((now - startedAt) / 1000),
+      txid, ageSec: Math.floor((now - entry.startedAt) / 1000),
+      hasBaseTxHash: !!entry.baseTxHash,
     });
-    _staleBtcPending[txid] = startedAt;
+    _staleBtcPending[txid] = entry;
   }
-  for (const [sig, startedAt] of Object.entries(data.solPending)) {
+  for (const [sig, entry] of Object.entries(data.solPending)) {
     logger.warn("[store] Found in-flight SOL tx from previous run — verifying on-chain", {
-      sig, ageSec: Math.floor((now - startedAt) / 1000),
+      sig, ageSec: Math.floor((now - entry.startedAt) / 1000),
+      hasBaseTxHash: !!entry.baseTxHash,
     });
-    _staleSolPending[sig] = startedAt;
+    _staleSolPending[sig] = entry;
   }
 }
 
@@ -179,15 +213,21 @@ function _captureStalePending(data: StoreData): void {
  * @param checker  Async function that queries Base chain for a Donated event.
  *                 Passed in from contract.ts to avoid circular imports.
  */
+/**
+ * W-C1 + F-009: Verify stale pending entries against the Base chain.
+ *
+ * checker now also receives the baseTxHash (if stored) so it can check the
+ * receipt directly rather than scanning event logs by estimated block range.
+ */
 export async function verifyAndResolveStalePending(
-  checker: (startedAtMs: number) => Promise<boolean>
+  checker: (startedAtMs: number, baseTxHash?: string) => Promise<boolean>
 ): Promise<void> {
   const btcEntries = Object.entries(_staleBtcPending);
   const solEntries = Object.entries(_staleSolPending);
   if (btcEntries.length === 0 && solEntries.length === 0) return;
 
-  for (const [txid, startedAt] of btcEntries) {
-    const alreadyDonated = await checker(startedAt);
+  for (const [txid, entry] of btcEntries) {
+    const alreadyDonated = await checker(entry.startedAt, entry.baseTxHash);
     if (alreadyDonated) {
       logger.info("[store] W-C1: Base chain confirms BTC tx was donated — marking processed", { txid });
       await markBtcProcessed(txid);
@@ -198,8 +238,8 @@ export async function verifyAndResolveStalePending(
     delete _staleBtcPending[txid];
   }
 
-  for (const [sig, startedAt] of solEntries) {
-    const alreadyDonated = await checker(startedAt);
+  for (const [sig, entry] of solEntries) {
+    const alreadyDonated = await checker(entry.startedAt, entry.baseTxHash);
     if (alreadyDonated) {
       logger.info("[store] W-C1: Base chain confirms SOL tx was donated — marking processed", { sig });
       await markSolProcessed(sig);
@@ -235,6 +275,12 @@ export function initStore(): void {
   data.solTxs.forEach((t) => _solSeen.add(t));
   Object.keys(data.solPending).forEach((t) => _solSeen.add(t));
 
+  // F-008: Restore checkpoint from disk so the first poll cycle after restart
+  // uses the same cursor as before the restart.
+  if (data.lastSolCheckpointSig) {
+    _lastSolCheckpointSig = data.lastSolCheckpointSig;
+  }
+
   // Release lock on any process exit (including process.exit() calls)
   process.on("exit", _releaseLock);
 }
@@ -255,7 +301,21 @@ export async function markBtcPending(txid: string): Promise<void> {
   return _enqueue(() => {
     const data = _readFromDisk();
     if (!data.btcPending[txid]) {
-      data.btcPending[txid] = Date.now();
+      data.btcPending[txid] = { startedAt: Date.now() };
+      _atomicWrite(data);
+    }
+  });
+}
+
+/**
+ * F-009: Store the Base tx hash in the pending entry after writeContract() succeeds.
+ * On crash recovery, this hash allows direct receipt check instead of event log scanning.
+ */
+export async function updateBtcPendingHash(txid: string, baseTxHash: string): Promise<void> {
+  return _enqueue(() => {
+    const data = _readFromDisk();
+    if (data.btcPending[txid]) {
+      data.btcPending[txid] = { ...data.btcPending[txid], baseTxHash };
       _atomicWrite(data);
     }
   });
@@ -301,7 +361,21 @@ export async function markSolPending(signature: string): Promise<void> {
   return _enqueue(() => {
     const data = _readFromDisk();
     if (!data.solPending[signature]) {
-      data.solPending[signature] = Date.now();
+      data.solPending[signature] = { startedAt: Date.now() };
+      _atomicWrite(data);
+    }
+  });
+}
+
+/**
+ * F-009: Store the Base tx hash in the pending entry after writeContract() succeeds.
+ * On crash recovery, this hash allows direct receipt check instead of event log scanning.
+ */
+export async function updateSolPendingHash(sig: string, baseTxHash: string): Promise<void> {
+  return _enqueue(() => {
+    const data = _readFromDisk();
+    if (data.solPending[sig]) {
+      data.solPending[sig] = { ...data.solPending[sig], baseTxHash };
       _atomicWrite(data);
     }
   });
@@ -326,6 +400,33 @@ export async function clearSolPending(signature: string): Promise<void> {
   return _enqueue(() => {
     const data = _readFromDisk();
     delete data.solPending[signature];
+    _atomicWrite(data);
+  });
+}
+
+// ── F-008: Solana checkpoint (anti-spam pagination) ───────────────────────────
+
+// In-memory cache to avoid repeated disk reads per poll cycle
+let _lastSolCheckpointSig: string | null = null;
+
+/**
+ * F-008: Returns the last Solana signature from the previous poll cycle.
+ * Used as the `until` cursor in getSignaturesForAddress so each poll only
+ * fetches signatures newer than this, preventing spam flooding attacks.
+ */
+export function getSolCheckpointSig(): string | null {
+  return _lastSolCheckpointSig;
+}
+
+/**
+ * F-008: Persist the newest signature seen this poll cycle as the checkpoint
+ * for the next cycle. Call with the first (newest) sig in the batch.
+ */
+export async function setSolCheckpointSig(sig: string): Promise<void> {
+  _lastSolCheckpointSig = sig; // update in-memory immediately
+  return _enqueue(() => {
+    const data = _readFromDisk();
+    data.lastSolCheckpointSig = sig;
     _atomicWrite(data);
   });
 }

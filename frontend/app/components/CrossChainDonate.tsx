@@ -24,6 +24,7 @@ import {
   Zap,
   Info,
 } from "lucide-react";
+import { parseUnits } from "viem";
 import { useAccount, useBalance, useReadContract } from "wagmi";
 import { useCrossChainDonate } from "../hooks/useCrossChainDonate";
 import { USDC_DECIMALS, ERC20_ABI, getSourceChain, getExplorerUrl } from "../lib/contracts";
@@ -94,10 +95,13 @@ export function CrossChainDonate({ onSuccess }: Props) {
   }, [mode]);
 
   const decimals    = mode === "usdc" ? USDC_DECIMALS : 18;
-  const parsedAmount =
-    amount && parseFloat(amount) > 0
-      ? BigInt(Math.floor(parseFloat(amount) * 10 ** decimals))
-      : 0n;
+  // F-010: Use parseUnits() instead of BigInt(Math.floor(parseFloat(amount) * 10 ** decimals)).
+  // The float multiplication overflows Number.MAX_SAFE_INTEGER for 18-decimal tokens,
+  // silently zeroing the least-significant digits. parseUnits() uses string arithmetic.
+  const parsedAmount = (() => {
+    if (!amount || parseFloat(amount) <= 0) return 0n;
+    try { return parseUnits(amount, decimals); } catch { return 0n; }
+  })();
 
   // For ETH mode: derive a USDC-equivalent amount to feed into quote()
   // (LayerZero fee is the same regardless of donation token)

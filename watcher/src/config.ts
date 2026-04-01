@@ -86,9 +86,17 @@ export const config = {
    */
   stalePriceMaxSec: parseInt(optional_env("STALE_PRICE_MAX_SEC", "120")),
 
-  // ── Min donation threshold ─────────────────────────────────────────────
+  // ── Min/max donation threshold ────────────────────────────────────────
   /** Minimum USD value of a deposit to trigger a donation (avoids dust) */
   minDonationUsd: parseFloat(optional_env("MIN_DONATION_USD", "1.0")),
+  /**
+   * F-005: Maximum USD value of a single deposit the watcher will process.
+   * Guards against over-crediting when the price oracle returns a stale high value.
+   * The on-chain circuit breaker caps at 5,000 USDC/tx, but this watcher-side cap
+   * prevents wasted on-chain tx attempts and provides an earlier signal of anomalies.
+   * Default: $5,000 (matches on-chain circuit breaker per-tx limit).
+   */
+  maxDonationUsd: parseFloat(optional_env("MAX_DONATION_USD", "5000")),
 
   // ── Health check server ────────────────────────────────────────────────
   /**

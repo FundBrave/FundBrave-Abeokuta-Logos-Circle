@@ -19,7 +19,10 @@ import {
 } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { config } from "../config";
-import { isSolProcessed, markSolPending, markSolProcessed, clearSolPending } from "../store";
+import {
+  isSolProcessed, markSolPending, markSolProcessed, clearSolPending,
+  updateSolPendingHash, getSolCheckpointSig, setSolCheckpointSig,
+} from "../store";
 import { getSolPrice } from "../price";
 import { donateToCampaign, deriveDonorAddress } from "../contract";
 import { withRetry, FailureTracker } from "../utils";
@@ -130,18 +133,25 @@ export async function pollSol(): Promise<void> {
     return;
   }
 
-  // Paginate signatures newest-first, stopping when we hit an already-processed
-  // entry. This ensures we never miss deposits when > 20 txs arrive per cycle.
-  // isSolProcessed() checks the in-memory Set (processed + pending), so it stops
-  // at both fully-done and in-flight entries.
+  // F-008: Use checkpoint-based pagination to prevent spam flooding attacks.
+  // The `until` parameter tells Solana RPC to stop fetching when it reaches the
+  // last signature we processed in the previous poll cycle. This means:
+  //   - Each poll only fetches NEW sigs since the last checkpoint
+  //   - An attacker cannot push legit deposits out of the scan window by flooding
+  //     spam transactions (all spam is between newest and checkpoint, so we see all of it)
+  //   - We no longer stop at the first processed sig (which was the attack vector)
+  const checkpointSig = getSolCheckpointSig();
+
   const signatures: { signature: string }[] = [];
   let before: string | undefined;
   let hitPageLimit = false;
+  let newestSigInBatch: string | undefined;
+
   try {
-    outerLoop: for (let page = 0; page < SOL_MAX_PAGES; page++) {
-      const opts = before
-        ? { limit: SOL_PAGE_SIZE, before }
-        : { limit: SOL_PAGE_SIZE };
+    for (let page = 0; page < SOL_MAX_PAGES; page++) {
+      const opts: { limit: number; before?: string; until?: string } = { limit: SOL_PAGE_SIZE };
+      if (before)        opts.before = before;
+      if (checkpointSig) opts.until  = checkpointSig; // F-008: stop at known watermark
 
       const pageSigs = await withRetry(
         () => connection.getSignaturesForAddress(watchPubkey!, opts),
@@ -149,9 +159,19 @@ export async function pollSol(): Promise<void> {
         `sol-get-signatures-page-${page}`
       );
 
+      if (pageSigs.length === 0) break; // caught up to checkpoint
+
+      // Track the newest sig seen (first page, first entry) for the new checkpoint
+      if (page === 0 && pageSigs.length > 0) {
+        newestSigInBatch = pageSigs[0].signature;
+      }
+
       for (const sig of pageSigs) {
-        if (isSolProcessed(sig.signature)) break outerLoop; // caught up
-        signatures.push(sig);
+        if (!isSolProcessed(sig.signature)) {
+          signatures.push(sig);
+        }
+        // Note: we do NOT break on processed sigs — spam sigs that were marked processed
+        // will be skipped by the isSolProcessed check above, not by stopping iteration.
       }
 
       if (pageSigs.length < SOL_PAGE_SIZE) break; // last page
@@ -217,10 +237,24 @@ export async function pollSol(): Promise<void> {
         signature, lamports, solPrice, usdValue,
       });
 
+      if (usdValue > config.maxDonationUsd) {
+        // F-005: Reject deposits above the per-tx cap to guard against stale price over-crediting.
+        logger.error(
+          `[sol] SOL deposit $${usdValue.toFixed(2)} exceeds MAX_DONATION_USD ($${config.maxDonationUsd}) — ` +
+          "skipping. Verify SOL price oracle and raise MAX_DONATION_USD if this is legitimate.",
+          { signature, usdValue, maxDonationUsd: config.maxDonationUsd }
+        );
+        // Do NOT mark processed — operator must investigate
+        continue;
+      }
+
       if (usdValue >= config.minDonationUsd) {
         await markSolPending(signature);
         try {
-          const hash = await donateToCampaign(usdValue, "sol", signature, donor);
+          // F-009: Pass onHashReady so Base tx hash is persisted before receipt confirmation
+          const hash = await donateToCampaign(usdValue, "sol", signature, donor,
+            (h) => updateSolPendingHash(signature, h)
+          );
           logger.info(`[sol] Donation complete`, { signature, baseTxHash: hash });
           await markSolProcessed(signature);
           _donateFailures.reset();
@@ -251,10 +285,22 @@ export async function pollSol(): Promise<void> {
       const usdcAmount = usdcRawToFloat(usdcRaw);
       logger.info(`[sol] USDC-SPL deposit: ${usdcAmount.toFixed(2)} USDC`, { signature });
 
+      if (usdcAmount > config.maxDonationUsd) {
+        // F-005: Cap also applies to USDC-SPL deposits (no price oracle needed, but cap still relevant)
+        logger.error(
+          `[sol] USDC-SPL deposit $${usdcAmount.toFixed(2)} exceeds MAX_DONATION_USD ($${config.maxDonationUsd}) — skipping`,
+          { signature, usdcAmount, maxDonationUsd: config.maxDonationUsd }
+        );
+        continue;
+      }
+
       if (usdcAmount >= config.minDonationUsd) {
         await markSolPending(signature);
         try {
-          const hash = await donateToCampaign(usdcAmount, "sol", signature, donor);
+          // F-009: Pass onHashReady so Base tx hash is persisted before receipt confirmation
+          const hash = await donateToCampaign(usdcAmount, "sol", signature, donor,
+            (h) => updateSolPendingHash(signature, h)
+          );
           logger.info(`[sol] Donation complete`, { signature, baseTxHash: hash });
           await markSolProcessed(signature);
           _donateFailures.reset();
@@ -274,5 +320,12 @@ export async function pollSol(): Promise<void> {
 
     // Not a deposit to our address
     await markSolProcessed(signature);
+  }
+
+  // F-008: Advance the checkpoint to the newest sig seen in this batch.
+  // On the next poll cycle, getSignaturesForAddress will stop at this sig,
+  // so only sigs newer than the current batch will be fetched.
+  if (newestSigInBatch) {
+    await setSolCheckpointSig(newestSigInBatch);
   }
 }

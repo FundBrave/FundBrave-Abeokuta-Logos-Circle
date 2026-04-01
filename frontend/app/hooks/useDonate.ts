@@ -137,24 +137,21 @@ export function useDonate() {
   };
 
   /**
-   * L-3: Get a quote from the Uniswap V2 router and apply 5% slippage.
-   * Returns 0n as a safe fallback if the quote call fails (e.g. on testnet with
-   * no liquidity), preserving the ability to donate while flagging the risk.
+   * L-3 / F-007: Get a quote from the Uniswap V2 router and apply 5% slippage.
+   * Throws if the quote call fails — callers must handle the error and block the
+   * transaction rather than falling back to minUsdcOut=0 (which removes all MEV
+   * protection and exposes users to sandwich attacks).
    */
   const getMinUsdcOut = async (path: Address[], amountIn: bigint): Promise<bigint> => {
     if (!publicClient || amountIn === 0n) return 0n;
-    try {
-      const amounts = await publicClient.readContract({
-        address:      UNISWAP_ROUTER_ADDRESS,
-        abi:          UNISWAP_ROUTER_ABI,
-        functionName: "getAmountsOut",
-        args:         [amountIn, path],
-      });
-      const expectedOut = (amounts as bigint[])[amounts.length - 1];
-      return expectedOut * 95n / 100n; // 5% slippage tolerance
-    } catch {
-      return 0n; // Fallback: no slippage check rather than blocking the donation
-    }
+    const amounts = await publicClient.readContract({
+      address:      UNISWAP_ROUTER_ADDRESS,
+      abi:          UNISWAP_ROUTER_ABI,
+      functionName: "getAmountsOut",
+      args:         [amountIn, path],
+    });
+    const expectedOut = (amounts as bigint[])[amounts.length - 1];
+    return expectedOut * 95n / 100n; // 5% slippage tolerance
   };
 
   /**

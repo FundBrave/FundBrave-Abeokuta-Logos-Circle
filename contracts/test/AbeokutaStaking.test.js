@@ -727,17 +727,31 @@ describe("AbeokutaStaking", function () {
   // ─── emergencyWithdraw (M3 / H-1) ────────────────────────────────────────
 
   describe("emergencyWithdraw", function () {
-    it("owner can rescue stuck aUSDC tokens (M3)", async function () {
+    it("F-001: reverts when trying to rescue aUSDC while stakers have funds", async function () {
+      // Staker has deposited — aUSDC rescue is blocked to protect staker principal
+      await staking.connect(staker1).stake(500n * ONE_USDC);
+      await expect(staking.emergencyWithdraw(aTokenAddress, owner.address))
+        .to.be.revertedWith("Cannot rescue aUSDC: belongs to active stakers");
+    });
+
+    it("F-001: owner can rescue aUSDC only after all stakers have unstaked (totalPrincipal == 0)", async function () {
       const stakingAddress = await staking.getAddress();
       await staking.connect(staker1).stake(500n * ONE_USDC);
       await simulateYield(50n * ONE_USDC);
-      // aUSDC is in staking; owner rescues it
-      const aTokenAddr = aTokenAddress;
-      const balBefore = await (await ethers.getContractAt("MockUSDC", aTokenAddr)).balanceOf(stakingAddress);
-      expect(balBefore).to.be.gt(0);
+      await staking.harvestAndDistribute();
+      await staking.connect(staker1).claimYield();
 
-      await staking.emergencyWithdraw(aTokenAddr, owner.address);
-      expect(await (await ethers.getContractAt("MockUSDC", aTokenAddr)).balanceOf(stakingAddress)).to.equal(0);
+      // Unstake all principal — totalPrincipal becomes 0
+      await staking.connect(staker1).unstake(500n * ONE_USDC);
+      expect(await staking.totalPrincipal()).to.equal(0);
+
+      // Now aUSDC rescue should succeed (residual yield aUSDC from Aave interest)
+      const aToken = await ethers.getContractAt("MockUSDC", aTokenAddress);
+      const bal = await aToken.balanceOf(stakingAddress);
+      if (bal > 0n) {
+        await staking.emergencyWithdraw(aTokenAddress, owner.address);
+        expect(await aToken.balanceOf(stakingAddress)).to.equal(0);
+      }
     });
 
     it("H-1: reverts when trying to rescue USDC (protects staker yield)", async function () {

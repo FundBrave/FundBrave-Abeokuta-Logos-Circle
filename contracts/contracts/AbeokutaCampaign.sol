@@ -84,6 +84,25 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
     /// @notice Pending swap adapter address; address(0) means no change in progress
     address public pendingSwapAdapter;
 
+    // ─── Bridge contract timelock (F-003) ────────────────────────────────────
+
+    /// @notice Pending bridge contract address; address(0) means no change in progress
+    address public pendingBridgeContract;
+    /// @notice Earliest timestamp at which pendingBridgeContract can be activated
+    uint256 public bridgeActivationTime;
+
+    // ─── Staking pool timelock (F-003) ───────────────────────────────────────
+
+    /// @notice Pending staking pool address; address(0) means no change in progress
+    address public pendingStakingPool;
+    /// @notice Earliest timestamp at which pendingStakingPool can be activated
+    uint256 public stakingPoolActivationTime;
+
+    // ─── Absolute deadline cap (F-006) ───────────────────────────────────────
+
+    /// @notice Absolute latest timestamp the deadline can ever be extended to (set at construction)
+    uint256 public immutable absoluteDeadlineMax;
+
     // ─── Circuit breaker manual halt ─────────────────────────────────────────
 
     /// @notice L7: Persistent halt flag that survives transaction reverts.
@@ -116,7 +135,11 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
     event Withdrawn(address indexed treasury, uint256 amount);
     event TreasuryUpdated(address indexed newTreasury);
     event BridgeUpdated(address indexed newBridge);
+    event BridgeContractProposed(address indexed proposedBridge, uint256 activationTime);
+    event BridgeContractChangeCancelled();
     event StakingPoolUpdated(address indexed newPool);
+    event StakingPoolProposed(address indexed proposedPool, uint256 activationTime);
+    event StakingPoolChangeCancelled();
     event DeadlineExtended(uint256 newDeadline);
     event SwapAdapterUpdated(address indexed newAdapter);
     event SwapAdapterProposed(address indexed proposedAdapter, uint256 activationTime);
@@ -174,6 +197,10 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         goalMin = _goalMin;
         goalMax = _goalMax;
         deadline = _deadline;
+        // F-006: Absolute cap = original deadline + one full extension window.
+        // The deadline can never be pushed beyond this, regardless of how many times
+        // extendDeadline is called.
+        absoluteDeadlineMax = _deadline + MAX_DEADLINE_EXTENSION;
 
         // SC-M3: Emit initial adapter address for off-chain indexers
         if (_swap != address(0)) {
@@ -374,6 +401,13 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
 
         // Convert EID to human-readable chain name (same mapping as AbeokutaBridgeReceiver)
         string memory sourceChain = _eidToChainName(srcEid);
+
+        // F-002: Verify the bridge has already pushed at least `amount` USDC to this contract.
+        // The legitimate FundBraveBridge transfers USDC to this contract atomically before calling
+        // (in the same transaction), so this balance check is satisfied.
+        // A malicious bridge that calls without transferring will be rejected here.
+        // Note: balance is checked BEFORE accounting updates to capture the pre-call state.
+        require(usdc.balanceOf(address(this)) >= amount, "USDC not received from bridge");
 
         // GAS-OPT: Reuse donorTotalContributed as the "is new donor" sentinel instead of a
         // separate _isDonor SSTORE. This saves one cold 0→nonzero SSTORE (~22k) for new donors,
@@ -609,18 +643,87 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         emit TreasuryUpdated(_treasury);
     }
 
-    /// @notice SC-H2: Zero address rejected; a zero bridge address would silently block all cross-chain donations.
+    /// @notice SC-H2: Initial setup only — sets bridge when not yet configured.
+    /// @dev F-003: After initial setup, use proposeBridgeContract/executeBridgeContract
+    ///      (48-hour timelock) for subsequent changes. This prevents instant phantom donation
+    ///      setup if the owner key is compromised.
     function setBridgeContract(address _bridge) external onlyOwner {
         require(_bridge != address(0), "Invalid bridge");
+        require(bridgeContract == address(0), "Use proposeBridgeContract to change existing bridge");
         bridgeContract = _bridge;
         emit BridgeUpdated(_bridge);
     }
 
-    /// @notice SC-H2: Zero address rejected; a zero pool address would silently block staking yield credits.
+    // ── Bridge contract timelock (F-003) ─────────────────────────────────────
+
+    /// @notice Propose a new bridge contract. The change becomes effective after ADAPTER_TIMELOCK (48h).
+    /// @dev Prevents instant-change attacks: even a compromised owner key cannot swap the bridge
+    ///      in a single block. Watchers have a 48-hour window to detect and respond.
+    function proposeBridgeContract(address _bridge) external onlyOwner {
+        require(_bridge != address(0), "Invalid bridge");
+        require(pendingBridgeContract == address(0), "Proposal already pending");
+        pendingBridgeContract = _bridge;
+        bridgeActivationTime = block.timestamp + ADAPTER_TIMELOCK;
+        emit BridgeContractProposed(_bridge, bridgeActivationTime);
+    }
+
+    /// @notice Execute a previously proposed bridge contract change after the timelock has expired.
+    function executeBridgeContract() external onlyOwner {
+        require(pendingBridgeContract != address(0), "No pending bridge");
+        require(block.timestamp >= bridgeActivationTime, "Timelock not expired");
+        address newBridge = pendingBridgeContract;
+        bridgeContract = newBridge;
+        pendingBridgeContract = address(0);
+        bridgeActivationTime = 0;
+        emit BridgeUpdated(newBridge);
+    }
+
+    /// @notice Cancel a pending bridge contract change before it is executed.
+    function cancelBridgeContractChange() external onlyOwner {
+        require(pendingBridgeContract != address(0), "No pending change");
+        pendingBridgeContract = address(0);
+        bridgeActivationTime = 0;
+        emit BridgeContractChangeCancelled();
+    }
+
+    /// @notice SC-H2: Initial setup only — sets staking pool when not yet configured.
+    /// @dev F-003: After initial setup, use proposeStakingPool/executeStakingPool
+    ///      (48-hour timelock) for subsequent changes.
     function setStakingPool(address _pool) external onlyOwner {
         require(_pool != address(0), "Invalid pool");
+        require(stakingPool == address(0), "Use proposeStakingPool to change existing pool");
         stakingPool = _pool;
         emit StakingPoolUpdated(_pool);
+    }
+
+    // ── Staking pool timelock (F-003) ─────────────────────────────────────────
+
+    /// @notice Propose a new staking pool. The change becomes effective after ADAPTER_TIMELOCK (48h).
+    function proposeStakingPool(address _pool) external onlyOwner {
+        require(_pool != address(0), "Invalid pool");
+        require(pendingStakingPool == address(0), "Proposal already pending");
+        pendingStakingPool = _pool;
+        stakingPoolActivationTime = block.timestamp + ADAPTER_TIMELOCK;
+        emit StakingPoolProposed(_pool, stakingPoolActivationTime);
+    }
+
+    /// @notice Execute a previously proposed staking pool change after the timelock has expired.
+    function executeStakingPool() external onlyOwner {
+        require(pendingStakingPool != address(0), "No pending pool");
+        require(block.timestamp >= stakingPoolActivationTime, "Timelock not expired");
+        address newPool = pendingStakingPool;
+        stakingPool = newPool;
+        pendingStakingPool = address(0);
+        stakingPoolActivationTime = 0;
+        emit StakingPoolUpdated(newPool);
+    }
+
+    /// @notice Cancel a pending staking pool change before it is executed.
+    function cancelStakingPoolChange() external onlyOwner {
+        require(pendingStakingPool != address(0), "No pending change");
+        pendingStakingPool = address(0);
+        stakingPoolActivationTime = 0;
+        emit StakingPoolChangeCancelled();
     }
 
     // ── Swap adapter timelock (SC-C3) ────────────────────────────────────────
@@ -661,10 +764,14 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         emit SwapAdapterChangeCancelled();
     }
 
-    /// @notice SC-M4: Capped at 730 days from now to prevent accidental centuries-long lockouts.
+    /// @notice SC-M4: Capped at 730 days from now AND by absoluteDeadlineMax (set at construction).
+    /// @dev F-006: absoluteDeadlineMax prevents repeated extensions from locking donors out
+    ///      of refunds indefinitely. The deadline can only ever be extended up to
+    ///      (originalDeadline + 730 days), regardless of how many times this is called.
     function extendDeadline(uint256 newDeadline) external onlyOwner {
         require(newDeadline > deadline, "Must be later");
         require(newDeadline <= block.timestamp + MAX_DEADLINE_EXTENSION, "Deadline too far");
+        require(newDeadline <= absoluteDeadlineMax, "Exceeds absolute max deadline");
         deadline = newDeadline;
         emit DeadlineExtended(newDeadline);
     }

@@ -685,10 +685,15 @@ contract AbeokutaStaking is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice M3: Rescue stuck tokens (e.g. un-harvested aUSDC yield when no stakers remain)
     /// @dev H-1: USDC is excluded — it belongs to stakers and must flow through claimYield/compound.
-    ///      Only non-USDC assets (e.g. accidentally received tokens, aUSDC) may be rescued.
+    ///      F-001: aUSDC is excluded while totalPrincipal > 0 — it represents staker deposits in Aave.
+    ///      Once all stakers have unstaked (totalPrincipal == 0), residual aUSDC yield may be rescued.
     function emergencyWithdraw(address token, address to) external onlyOwner {
         require(to != address(0), "Invalid recipient");
         require(token != address(usdc), "Cannot rescue USDC: use claim functions");
+        require(
+            token != address(aUsdc) || totalPrincipal == 0,
+            "Cannot rescue aUSDC: belongs to active stakers"
+        );
         uint256 bal = IERC20(token).balanceOf(address(this));
         require(bal > 0, "Nothing to rescue");
         IERC20(token).safeTransfer(to, bal);

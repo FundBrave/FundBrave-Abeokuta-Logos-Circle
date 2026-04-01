@@ -10,7 +10,7 @@
 
 import axios from "axios";
 import { config } from "../config";
-import { isBtcProcessed, markBtcPending, markBtcProcessed, clearBtcPending } from "../store";
+import { isBtcProcessed, markBtcPending, markBtcProcessed, clearBtcPending, updateBtcPendingHash } from "../store";
 import { getBtcPrice } from "../price";
 import { donateToCampaign, deriveDonorAddress } from "../contract";
 import { withRetry, FailureTracker } from "../utils";
@@ -183,6 +183,16 @@ export async function pollBtc(): Promise<void> {
       continue;
     }
 
+    // F-005: Reject deposits above the per-tx cap to guard against stale price over-crediting.
+    if (usdValue > config.maxDonationUsd) {
+      logger.error(
+        `[btc] Deposit $${usdValue.toFixed(2)} exceeds MAX_DONATION_USD ($${config.maxDonationUsd}) — ` +
+        "skipping. Verify BTC price oracle and raise MAX_DONATION_USD if this is a legitimate deposit.",
+        { txid: tx.txid, usdValue, maxDonationUsd: config.maxDonationUsd }
+      );
+      continue; // Do NOT mark processed — operator must investigate
+    }
+
     // Two-phase commit: mark pending before donation to detect crashes
     await markBtcPending(tx.txid);
 
@@ -191,7 +201,10 @@ export async function pollBtc(): Promise<void> {
     const donor = senderAddr ? deriveDonorAddress("btc", senderAddr) : undefined;
 
     try {
-      const baseTxHash = await donateToCampaign(usdValue, "btc", tx.txid, donor);
+      // F-009: Pass onHashReady so the Base tx hash is persisted before receipt confirmation.
+      const baseTxHash = await donateToCampaign(usdValue, "btc", tx.txid, donor,
+        (hash) => updateBtcPendingHash(tx.txid, hash)
+      );
       logger.info(`[btc] Donation complete`, { txid: tx.txid, baseTxHash });
       await markBtcProcessed(tx.txid);
       _donateFailures.reset();

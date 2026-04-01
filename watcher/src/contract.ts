@@ -144,19 +144,40 @@ export async function getFloatBalance(): Promise<bigint> {
 // ── W-C1: On-chain donation confirmation check ─────────────────────────────────
 
 /**
- * W-C1: Check whether the float wallet emitted a Donated event at or after `startedAtMs`.
+ * W-C1 + F-009: Check whether a donation confirmed on-chain.
  *
- * Called when a stale pending entry is found on startup to determine whether the
- * donation actually confirmed on-chain before the crash. If it did, the entry
- * should be marked processed (not retried), preventing a double donation.
+ * If `baseTxHash` is provided (stored in the pending entry after writeContract()),
+ * checks the receipt directly — this is authoritative and eliminates block range
+ * estimation errors that could cause false negatives.
  *
- * Block range: searches from the estimated block at `startedAtMs` to latest.
- * Uses 2 s/block (Base block time) plus a 100-block safety buffer.
+ * Falls back to event log scanning (original method) when no hash is available
+ * (e.g. crash happened before writeContract completed).
  *
  * @param startedAtMs  Unix timestamp (ms) when the donation attempt began
- * @returns true if a Donated event from the float wallet was found in that range
+ * @param baseTxHash   Base tx hash from writeContract() — if known
+ * @returns true if the donation confirmed on-chain
  */
-export async function checkRecentDonation(startedAtMs: number): Promise<boolean> {
+export async function checkRecentDonation(startedAtMs: number, baseTxHash?: string): Promise<boolean> {
+  // F-009: Direct receipt check — much more reliable than event log scanning
+  if (baseTxHash) {
+    try {
+      const receipt = await publicClient.getTransactionReceipt({
+        hash: baseTxHash as `0x${string}`,
+      });
+      const confirmed = receipt?.status === "success";
+      logger.info("[contract] F-009: Direct receipt check", {
+        baseTxHash, confirmed, status: receipt?.status,
+      });
+      return confirmed;
+    } catch (err) {
+      logger.warn("[contract] F-009: Direct receipt check failed — falling back to event scan", {
+        baseTxHash, error: String(err),
+      });
+      // Fall through to event log scanning
+    }
+  }
+
+  // Fallback: original event log scanning (used when no hash is available)
   try {
     const latestBlock = await publicClient.getBlockNumber();
     const ageMs = Date.now() - startedAtMs;
@@ -198,7 +219,10 @@ export async function donateToCampaign(
   usdValueFloat: number,
   source: "btc" | "sol",
   txRef: string,
-  donor?: `0x${string}`
+  donor?: `0x${string}`,
+  /** F-009: Called with the Base tx hash after writeContract() but before waitForTransactionReceipt().
+   *  Use this to persist the hash in the pending entry for reliable crash recovery. */
+  onHashReady?: (hash: string) => Promise<void>
 ): Promise<string> {
   return enqueueTx(async () => {
     // Convert USD to USDC 6-decimal units
@@ -236,6 +260,21 @@ export async function donateToCampaign(
           functionName: "donateUSDC",
           args: [usdcAmount],
         });
+
+    // F-009: Persist the Base tx hash in the pending entry immediately after broadcast.
+    // If the process crashes before waitForTransactionReceipt completes, the crash
+    // recovery path can check this hash directly via getTransactionReceipt() instead
+    // of relying on inaccurate block range estimation.
+    if (onHashReady) {
+      try {
+        await onHashReady(hash);
+      } catch (err) {
+        // Non-fatal: crash recovery falls back to event log scanning if this fails
+        logger.warn("[contract] F-009: Failed to persist Base tx hash in pending entry", {
+          hash, error: String(err),
+        });
+      }
+    }
 
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") {

@@ -397,6 +397,48 @@ describe("AbeokutaCampaign", function () {
   });
 
   // ──────────────────────────────────────────────
+  // handleCrossChainDonation (F-002)
+  // ──────────────────────────────────────────────
+
+  describe("handleCrossChainDonation", function () {
+    const ETHEREUM_EID = 30101;
+
+    it("succeeds when bridge pushes USDC before calling (F-002)", async function () {
+      const amount = 500n * ONE_USDC;
+      // Simulate bridge: push USDC to campaign first, then call
+      const campaignAddress = await campaign.getAddress();
+      await mockUSDC.mint(campaignAddress, amount);
+      await expect(
+        campaign.connect(bridge).handleCrossChainDonation(donor1.address, 0, amount, ethers.ZeroHash, ETHEREUM_EID)
+      ).to.emit(campaign, "Donated").withArgs(donor1.address, amount, await mockUSDC.getAddress(), "ethereum");
+      expect(await campaign.totalRaised()).to.equal(amount);
+    });
+
+    it("reverts when bridge calls without pushing USDC first (F-002)", async function () {
+      // Bridge calls without transferring USDC — should revert
+      await expect(
+        campaign.connect(bridge).handleCrossChainDonation(donor1.address, 0, 500n * ONE_USDC, ethers.ZeroHash, ETHEREUM_EID)
+      ).to.be.revertedWith("USDC not received from bridge");
+    });
+
+    it("reverts for non-bridge caller", async function () {
+      const campaignAddress = await campaign.getAddress();
+      await mockUSDC.mint(campaignAddress, 500n * ONE_USDC);
+      await expect(
+        campaign.connect(other).handleCrossChainDonation(donor1.address, 0, 500n * ONE_USDC, ethers.ZeroHash, ETHEREUM_EID)
+      ).to.be.revertedWithCustomError(campaign, "Unauthorized");
+    });
+
+    it("reverts with zero donor address", async function () {
+      const campaignAddress = await campaign.getAddress();
+      await mockUSDC.mint(campaignAddress, 500n * ONE_USDC);
+      await expect(
+        campaign.connect(bridge).handleCrossChainDonation(ethers.ZeroAddress, 0, 500n * ONE_USDC, ethers.ZeroHash, ETHEREUM_EID)
+      ).to.be.revertedWith("Invalid donor");
+    });
+  });
+
+  // ──────────────────────────────────────────────
   // Withdrawal
   // ──────────────────────────────────────────────
 
@@ -724,26 +766,15 @@ describe("AbeokutaCampaign", function () {
       await expect(campaign.connect(other).setTreasury(other.address)).to.be.reverted;
     });
 
-    it("owner can update bridge contract and emits BridgeUpdated", async function () {
+    // ── setBridgeContract: initial setup only (F-003) ─────────────────────────
+    it("setBridgeContract reverts when bridge is already set (F-003)", async function () {
+      // bridge is already set in beforeEach; calling again must revert
       await expect(campaign.setBridgeContract(other.address))
-        .to.emit(campaign, "BridgeUpdated")
-        .withArgs(other.address);
-      expect(await campaign.bridgeContract()).to.equal(other.address);
+        .to.be.revertedWith("Use proposeBridgeContract to change existing bridge");
     });
 
     it("non-owner cannot call setBridgeContract", async function () {
       await expect(campaign.connect(other).setBridgeContract(other.address)).to.be.reverted;
-    });
-
-    it("owner can update staking pool and emits StakingPoolUpdated", async function () {
-      await expect(campaign.setStakingPool(other.address))
-        .to.emit(campaign, "StakingPoolUpdated")
-        .withArgs(other.address);
-      expect(await campaign.stakingPool()).to.equal(other.address);
-    });
-
-    it("non-owner cannot call setStakingPool", async function () {
-      await expect(campaign.connect(other).setStakingPool(other.address)).to.be.reverted;
     });
 
     it("setBridgeContract reverts with zero address (SC-H2)", async function () {
@@ -751,9 +782,79 @@ describe("AbeokutaCampaign", function () {
         .to.be.revertedWith("Invalid bridge");
     });
 
+    // ── proposeBridgeContract / executeBridgeContract timelock (F-003) ────────
+    it("proposeBridgeContract sets pending state and emits event", async function () {
+      await expect(campaign.proposeBridgeContract(other.address))
+        .to.emit(campaign, "BridgeContractProposed");
+      expect(await campaign.pendingBridgeContract()).to.equal(other.address);
+      expect(await campaign.bridgeActivationTime()).to.be.gt(0);
+    });
+
+    it("cannot execute bridge before 48h timelock", async function () {
+      await campaign.proposeBridgeContract(other.address);
+      await expect(campaign.executeBridgeContract()).to.be.revertedWith("Timelock not expired");
+    });
+
+    it("can execute bridge after 48h and emits BridgeUpdated", async function () {
+      await campaign.proposeBridgeContract(other.address);
+      await time.increase(48 * 3600 + 1);
+      await expect(campaign.executeBridgeContract())
+        .to.emit(campaign, "BridgeUpdated")
+        .withArgs(other.address);
+      expect(await campaign.bridgeContract()).to.equal(other.address);
+      expect(await campaign.pendingBridgeContract()).to.equal(ethers.ZeroAddress);
+    });
+
+    it("cancelBridgeContractChange clears pending state", async function () {
+      await campaign.proposeBridgeContract(other.address);
+      await expect(campaign.cancelBridgeContractChange())
+        .to.emit(campaign, "BridgeContractChangeCancelled");
+      expect(await campaign.pendingBridgeContract()).to.equal(ethers.ZeroAddress);
+    });
+
+    it("cannot propose two bridge changes simultaneously", async function () {
+      await campaign.proposeBridgeContract(other.address);
+      await expect(campaign.proposeBridgeContract(other.address))
+        .to.be.revertedWith("Proposal already pending");
+    });
+
+    // ── setStakingPool: initial setup only (F-003) ────────────────────────────
+    it("setStakingPool reverts when pool is already set (F-003)", async function () {
+      await expect(campaign.setStakingPool(other.address))
+        .to.be.revertedWith("Use proposeStakingPool to change existing pool");
+    });
+
+    it("non-owner cannot call setStakingPool", async function () {
+      await expect(campaign.connect(other).setStakingPool(other.address)).to.be.reverted;
+    });
+
     it("setStakingPool reverts with zero address (SC-H2)", async function () {
       await expect(campaign.setStakingPool(ethers.ZeroAddress))
         .to.be.revertedWith("Invalid pool");
+    });
+
+    // ── proposeStakingPool / executeStakingPool timelock (F-003) ─────────────
+    it("proposeStakingPool sets pending state and emits event", async function () {
+      await expect(campaign.proposeStakingPool(other.address))
+        .to.emit(campaign, "StakingPoolProposed");
+      expect(await campaign.pendingStakingPool()).to.equal(other.address);
+      expect(await campaign.stakingPoolActivationTime()).to.be.gt(0);
+    });
+
+    it("can execute staking pool after 48h and emits StakingPoolUpdated", async function () {
+      await campaign.proposeStakingPool(other.address);
+      await time.increase(48 * 3600 + 1);
+      await expect(campaign.executeStakingPool())
+        .to.emit(campaign, "StakingPoolUpdated")
+        .withArgs(other.address);
+      expect(await campaign.stakingPool()).to.equal(other.address);
+    });
+
+    it("cancelStakingPoolChange clears pending state", async function () {
+      await campaign.proposeStakingPool(other.address);
+      await expect(campaign.cancelStakingPoolChange())
+        .to.emit(campaign, "StakingPoolChangeCancelled");
+      expect(await campaign.pendingStakingPool()).to.equal(ethers.ZeroAddress);
     });
 
     it("extendDeadline reverts when beyond 730-day cap (SC-M4)", async function () {
@@ -761,6 +862,23 @@ describe("AbeokutaCampaign", function () {
       const tooFar = now + 731 * 86400;
       await expect(campaign.extendDeadline(tooFar))
         .to.be.revertedWith("Deadline too far");
+    });
+
+    it("extendDeadline reverts when beyond absoluteDeadlineMax (F-006)", async function () {
+      // absoluteDeadlineMax = originalDeadline + 730 days
+      // Can't extend past that even with many calls
+      const absMax = await campaign.absoluteDeadlineMax();
+      await expect(campaign.extendDeadline(absMax + 1n))
+        .to.be.reverted; // reverts with either "Deadline too far" or "Exceeds absolute max deadline"
+    });
+
+    it("extendDeadline cannot be called repeatedly to push beyond absoluteDeadlineMax (F-006)", async function () {
+      // Advance time by 700 days so block.timestamp + 730days > absoluteDeadlineMax
+      await time.increase(700 * 86400);
+      const now = await time.latest();
+      const newDeadline = now + 200 * 86400; // within per-call limit but past absoluteDeadlineMax
+      await expect(campaign.extendDeadline(newDeadline))
+        .to.be.revertedWith("Exceeds absolute max deadline");
     });
 
     // ── Swap adapter timelock (SC-C3) ─────────────────────────────────────────
