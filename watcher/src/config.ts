@@ -103,5 +103,6 @@ export const config = {
    * W-L1: HTTP port for the /health endpoint used by Kubernetes/Docker probes.
    * Set to 0 to disable.
    */
-  healthPort: parseInt(optional_env("HEALTH_PORT", "3001")),
+  // Railway assigns $PORT dynamically. Fall back to HEALTH_PORT, then 3001.
+  healthPort: parseInt(process.env.PORT ?? optional_env("HEALTH_PORT", "3001")),
 } as const;
