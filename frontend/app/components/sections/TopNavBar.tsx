@@ -125,11 +125,60 @@ export function TopNavBar() {
           {/* Right: Wallet + Hamburger */}
           <div className="flex items-center gap-3 ml-auto">
             {mounted && (
-              <ConnectButton
-                showBalance={false}
-                chainStatus="icon"
-                accountStatus="avatar"
-              />
+              <ConnectButton.Custom>
+                {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted: rbMounted }) => {
+                  const connected = rbMounted && account && chain;
+                  return (
+                    <div aria-hidden={!rbMounted} style={!rbMounted ? { opacity: 0, pointerEvents: "none", userSelect: "none" } : undefined}>
+                      {!connected ? (
+                        <button
+                          onClick={openConnectModal}
+                          type="button"
+                          className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-on-primary transition-all hover:brightness-110 active:scale-95 md:px-4 md:text-sm"
+                        >
+                          <span className="material-symbols-outlined text-base leading-none">account_balance_wallet</span>
+                          <span className="hidden sm:inline">Connect</span>
+                          <span className="hidden md:inline"> Wallet</span>
+                        </button>
+                      ) : chain.unsupported ? (
+                        <button
+                          onClick={openChainModal}
+                          type="button"
+                          className="flex items-center gap-1.5 rounded-xl bg-red-500/20 px-3 py-2 text-xs font-bold text-red-400 hover:bg-red-500/30 md:px-4 md:text-sm"
+                        >
+                          <span className="material-symbols-outlined text-base leading-none">warning</span>
+                          <span className="hidden sm:inline">Wrong Network</span>
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={openChainModal}
+                            type="button"
+                            className="hidden sm:flex items-center gap-1 rounded-lg bg-surface-container px-2 py-1.5 text-xs font-medium hover:bg-surface-variant"
+                          >
+                            {chain.iconUrl && (
+                              <img src={chain.iconUrl} alt={chain.name} className="h-4 w-4 rounded-full" />
+                            )}
+                            <span className="hidden md:inline">{chain.name}</span>
+                          </button>
+                          <button
+                            onClick={openAccountModal}
+                            type="button"
+                            className="flex items-center gap-1.5 rounded-xl bg-surface-container px-3 py-2 text-xs font-bold hover:bg-surface-variant md:px-4 md:text-sm"
+                          >
+                            {account.ensAvatar ? (
+                              <img src={account.ensAvatar} alt={account.displayName} className="h-5 w-5 rounded-full" />
+                            ) : (
+                              <span className="material-symbols-outlined text-base leading-none text-primary">account_circle</span>
+                            )}
+                            <span>{account.displayName}</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                }}
+              </ConnectButton.Custom>
             )}
             <button
               onClick={() => setMobileOpen((v) => !v)}
