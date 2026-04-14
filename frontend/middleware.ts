@@ -1,13 +1,11 @@
 /**
  * Next.js middleware — generates a per-request CSP nonce and sets security headers.
  *
- * FE-C1: Moves CSP from static next.config.js headers (which cannot use dynamic
- * nonces) to middleware so each response gets a fresh cryptographic nonce.
- * `strict-dynamic` propagates trust from the nonce'd entry-point script to
- * scripts it loads dynamically, without needing `unsafe-inline`.
- *
- * The nonce is forwarded as the `x-nonce` request header so layout.tsx can
- * read it via `next/headers` and pass it to <Script> components.
+ * FE-C1: CSP is set per-request here (not in static next.config.js headers) so the
+ * nonce is fresh on every response. All pages are statically pre-rendered, so the
+ * nonce in the HTML script tags cannot be set at runtime — we rely on 'self' for
+ * same-origin Next.js chunks instead of 'strict-dynamic'. The nonce is still
+ * forwarded via x-nonce for any future SSR routes that read it via next/headers.
  */
 
 import { NextResponse } from "next/server";
@@ -21,10 +19,15 @@ export function middleware(request: NextRequest) {
 
   const cspHeader = [
     "default-src 'self'",
-    // strict-dynamic: nonce'd script may load further scripts without unsafe-inline
+    // 'self' allows Next.js bundled scripts from /_next/static/*.
+    // NOTE: 'strict-dynamic' was removed because it overrides 'self' and requires every script
+    // tag to carry a matching nonce. Our pages are all statically pre-rendered at build time
+    // (see `○` routes in `next build` output), so the per-request nonce from middleware is
+    // never baked into the static HTML's <script> tags. With 'strict-dynamic' present,
+    // the browser would block all JavaScript on those pages. 'self' is sufficient here
+    // because every bundle (wagmi, RainbowKit, GSAP) ships as a same-origin Next.js chunk.
     // FE-C1: unsafe-eval is only included in dev mode for Next.js React Refresh (hot reload).
-    // In production, eval is not needed — wagmi v2/viem use static ABI encoding.
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
+    `script-src 'self' 'nonce-${nonce}'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: https:",
     "font-src 'self' data: https://fonts.gstatic.com",
