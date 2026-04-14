@@ -1,0 +1,15 @@
+{
+  "network": "Base Mainnet",
+  "chainId": 8453,
+  "deployedAt": "2026-04-13T01:01:17.583Z",
+  "AbeokutaCampaign": "0x59f68C0A06fcb0602A5E51A518aF895C2dE82911",
+  "ExistingReceiver": "0xb1FE02F5adF22705e6ad394EF812b59DA29d69db",
+  "WatcherAddress": "0x0D093325d5f579bdb9D5e54A3c27A467c731C644",
+  "SwapAdapter": "0x4864892cDEaD4697c4B1D26582A4175A839eD4E4",
+  "Treasury": "0x91c8581e0850a7F0A48AaAb3a9027229071D28Ae",
+  "USDC": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "GoalMinUSDC": 1000,
+  "GoalMaxUSDC": 2500,
+  "DeadlineTs": 1781224250,
+  "Deployer": "0x379739a949e5b2Afa2c9CB0555092727725f726C"
+}

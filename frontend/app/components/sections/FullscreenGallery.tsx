@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect, useCallback } from "react";
+import { useGSAP } from "@gsap/react";
 import { gsap } from "../../lib/gsap-config";
 import Image from "next/image";
 
@@ -86,8 +87,8 @@ export function FullscreenGallery({
     };
   }, [isOpen]);
 
-  // Entry animation
-  useEffect(() => {
+  // Entry animation — useGSAP auto-kills the timeline when isOpen changes or component unmounts
+  useGSAP(() => {
     if (!isOpen || !overlayRef.current) return;
 
     const tl = gsap.timeline();
@@ -118,7 +119,7 @@ export function FullscreenGallery({
         0.3
       );
     }
-  }, [isOpen]);
+  }, { dependencies: [isOpen] });
 
   // Keyboard navigation
   useEffect(() => {

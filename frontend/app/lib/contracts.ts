@@ -39,8 +39,8 @@ function requireAddress(name: string, val: string | undefined, fallback?: string
 
 // ─── Chain IDs ────────────────────────────────────────────────────────────────
 
-export const TARGET_CHAIN    = baseSepolia;  // Switch to `base` for mainnet
-export const TARGET_CHAIN_ID = baseSepolia.id;
+export const TARGET_CHAIN    = base;  // mainnet
+export const TARGET_CHAIN_ID = base.id;
 
 // ─── Contract Addresses ───────────────────────────────────────────────────────
 // These are populated after deployment. Update from deployments/<chainId>.json

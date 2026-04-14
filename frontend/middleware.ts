@@ -1,33 +1,38 @@
 /**
- * Next.js middleware — generates a per-request CSP nonce and sets security headers.
+ * Next.js middleware — sets security headers including a Content-Security-Policy.
  *
- * FE-C1: CSP is set per-request here (not in static next.config.js headers) so the
- * nonce is fresh on every response. All pages are statically pre-rendered, so the
- * nonce in the HTML script tags cannot be set at runtime — we rely on 'self' for
- * same-origin Next.js chunks instead of 'strict-dynamic'. The nonce is still
- * forwarded via x-nonce for any future SSR routes that read it via next/headers.
+ * FE-C1: All pages are statically pre-rendered (○ routes). Next.js App Router bakes
+ * inline <script> tags (RSC payload: self.__next_f.push([...])) into the static HTML
+ * at build time. These inline scripts cannot carry a per-request nonce because the HTML
+ * is frozen at build time, not at request time.
+ *
+ * CSP design: 'self' allows same-origin /_next/static/ bundles; 'unsafe-inline' allows
+ * the RSC payload inline scripts that Next.js generates. Without 'unsafe-inline', React
+ * cannot hydrate (inline scripts blocked → useEffect never runs → no ConnectButton, no
+ * animations). This is acceptable for a static fundraising site with no user-generated
+ * content — the 'self' restriction already blocks scripts from untrusted origins.
+ *
+ * The nonce is kept for the x-nonce header so any future SSR routes can read it via
+ * next/headers and pass it to <Script> components.
  */
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 export function middleware(request: NextRequest) {
-  // Web Crypto API — available in Edge Runtime (no Node.js crypto import needed)
+  // Keep generating a nonce for future SSR routes that need it via x-nonce header.
   const array = new Uint8Array(16);
   crypto.getRandomValues(array);
   const nonce = btoa(String.fromCharCode(...array));
 
   const cspHeader = [
     "default-src 'self'",
-    // 'self' allows Next.js bundled scripts from /_next/static/*.
-    // NOTE: 'strict-dynamic' was removed because it overrides 'self' and requires every script
-    // tag to carry a matching nonce. Our pages are all statically pre-rendered at build time
-    // (see `○` routes in `next build` output), so the per-request nonce from middleware is
-    // never baked into the static HTML's <script> tags. With 'strict-dynamic' present,
-    // the browser would block all JavaScript on those pages. 'self' is sufficient here
-    // because every bundle (wagmi, RainbowKit, GSAP) ships as a same-origin Next.js chunk.
-    // FE-C1: unsafe-eval is only included in dev mode for Next.js React Refresh (hot reload).
-    `script-src 'self' 'nonce-${nonce}'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
+    // 'self' — same-origin Next.js chunk files (/_next/static/*)
+    // 'unsafe-inline' — Next.js RSC payload inline scripts (self.__next_f.push)
+    //   required for React hydration on static pages; ignored by nonce-aware
+    //   browsers only when a nonce is also present, so we omit the nonce here.
+    // 'unsafe-eval' — dev-only, needed for Next.js React Fast Refresh (hot reload).
+    `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: https:",
     "font-src 'self' data: https://fonts.gstatic.com",

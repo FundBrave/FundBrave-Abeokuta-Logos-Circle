@@ -1,13 +1,17 @@
 /**
- * Viem client + helpers for calling donateUSDC() on Base.
+ * Viem client + helpers for calling campaign donation functions on Base.
  *
- * Float wallet pattern:
- *   1. Before each donation, verify on-chain USDC allowance and (re)approve if needed.
- *   2. Per deposit, call donateUSDC(usdcAmount) — campaign pulls from float wallet.
+ * BTC/SOL donations:
+ *   Call creditBTCSolDonation(donor, usdcEquivalent, sourceChain) — no USDC
+ *   is transferred. The campaign records the equivalent value on-chain without
+ *   requiring a float wallet. Only ETH for gas is needed in the watcher wallet.
+ *
+ * Direct USDC donations (future use):
+ *   Float wallet pattern — approve + donateUSDC(amount).
  *
  * W-C1: Transaction queue errors are now logged (not silently swallowed).
  * W-H4: Approval is verified against the live on-chain allowance before every
- *        donation, eliminating the stale-flag problem.
+ *        direct USDC donation, eliminating the stale-flag problem.
  */
 
 import {
@@ -51,8 +55,9 @@ const ERC20_ABI = parseAbi([
 
 const CAMPAIGN_ABI = parseAbi([
   "function donateUSDC(uint256 amount) external",
-  // Gap #6: attribute donation to the actual BTC/SOL sender instead of float wallet
-  "function donateUSDCFor(address donor, uint256 amount) external",
+  // creditBTCSolDonation: records BTC/SOL donation on-chain without any USDC transfer.
+  // Watcher-only. Requires no float USDC — only ETH for gas.
+  "function creditBTCSolDonation(address donor, uint256 usdcEquivalent, string sourceChain) external",
 ]);
 
 const STAKING_ABI = parseAbi([
@@ -132,6 +137,7 @@ export function deriveDonorAddress(chain: "btc" | "sol", senderAddr: string): `0
 
 // ── Float wallet balance check ─────────────────────────────────────────────────
 
+/** Returns the watcher wallet's USDC balance (informational — no longer required for BTC/SOL). */
 export async function getFloatBalance(): Promise<bigint> {
   return await publicClient.readContract({
     address: config.usdcAddress,
@@ -139,6 +145,11 @@ export async function getFloatBalance(): Promise<bigint> {
     functionName: "balanceOf",
     args: [account.address],
   });
+}
+
+/** Returns the watcher wallet's ETH balance (needed for gas on every creditBTCSolDonation call). */
+export async function getWatcherEthBalance(): Promise<bigint> {
+  return await publicClient.getBalance({ address: account.address });
 }
 
 // ── W-C1: On-chain donation confirmation check ─────────────────────────────────
@@ -206,20 +217,22 @@ export async function checkRecentDonation(startedAtMs: number, baseTxHash?: stri
 // ── Main donation function ─────────────────────────────────────────────────────
 
 /**
- * Donate USDC to the campaign on behalf of a BTC/SOL depositor.
+ * Record a BTC/SOL donation on-chain via creditBTCSolDonation().
+ *
+ * No USDC is transferred — the campaign just records the equivalent USD value.
+ * The watcher wallet only needs ETH for gas (no USDC float required).
  *
  * @param usdValueFloat  USD value of the deposit (e.g. 0.015 BTC × $60,000 = $900)
- * @param source         Label for logging ("btc" | "sol")
+ * @param source         "btc" | "sol" — mapped to "bitcoin" / "solana" on-chain
  * @param txRef          Original chain tx hash/signature for logging
- * @param donor          Gap #6: Derived EVM address for the actual sender (optional).
- *                       If provided, uses donateUSDCFor() to attribute the donation correctly.
- *                       If omitted, falls back to donateUSDC() (float wallet is donor).
+ * @param donor          Derived EVM pseudo-address for the actual BTC/SOL sender
+ * @param onHashReady    F-009: callback with Base tx hash for crash-safe persistence
  */
 export async function donateToCampaign(
   usdValueFloat: number,
   source: "btc" | "sol",
   txRef: string,
-  donor?: `0x${string}`,
+  donor: `0x${string}`,
   /** F-009: Called with the Base tx hash after writeContract() but before waitForTransactionReceipt().
    *  Use this to persist the hash in the pending entry for reliable crash recovery. */
   onHashReady?: (hash: string) => Promise<void>
@@ -227,49 +240,29 @@ export async function donateToCampaign(
   return enqueueTx(async () => {
     // Convert USD to USDC 6-decimal units
     const usdcAmount = BigInt(Math.floor(usdValueFloat * 1_000_000));
-
     if (usdcAmount === 0n) throw new Error("Donation amount rounds to zero USDC");
 
-    // Check float wallet has enough
-    const balance = await getFloatBalance();
-    if (balance < usdcAmount) {
-      throw new Error(
-        `Float wallet has only ${formatUnits(balance, 6)} USDC; need ${formatUnits(usdcAmount, 6)} USDC`
-      );
-    }
-
-    // W-H4: Verify live on-chain allowance before every donation
-    await ensureApproval();
+    // Map watcher source label → on-chain sourceChain string
+    const sourceChain = source === "btc" ? "bitcoin" : "solana";
 
     logger.info(
-      `[contract] Donating ${formatUnits(usdcAmount, 6)} USDC on behalf of ${source} tx ${txRef}` +
-      (donor ? ` (donor: ${donor})` : " (float wallet as donor)")
+      `[contract] Recording ${formatUnits(usdcAmount, 6)} USDC equivalent for ${sourceChain} tx ${txRef}`,
+      { donor }
     );
 
-    // Gap #6: Use donateUSDCFor when we have a derived donor address
-    const hash = donor
-      ? await walletClient.writeContract({
-          address: config.campaignAddress,
-          abi: CAMPAIGN_ABI,
-          functionName: "donateUSDCFor",
-          args: [donor, usdcAmount],
-        })
-      : await walletClient.writeContract({
-          address: config.campaignAddress,
-          abi: CAMPAIGN_ABI,
-          functionName: "donateUSDC",
-          args: [usdcAmount],
-        });
+    // No USDC transfer: creditBTCSolDonation only updates on-chain accounting
+    const hash = await walletClient.writeContract({
+      address: config.campaignAddress,
+      abi: CAMPAIGN_ABI,
+      functionName: "creditBTCSolDonation",
+      args: [donor, usdcAmount, sourceChain],
+    });
 
     // F-009: Persist the Base tx hash in the pending entry immediately after broadcast.
-    // If the process crashes before waitForTransactionReceipt completes, the crash
-    // recovery path can check this hash directly via getTransactionReceipt() instead
-    // of relying on inaccurate block range estimation.
     if (onHashReady) {
       try {
         await onHashReady(hash);
       } catch (err) {
-        // Non-fatal: crash recovery falls back to event log scanning if this fails
         logger.warn("[contract] F-009: Failed to persist Base tx hash in pending entry", {
           hash, error: String(err),
         });
@@ -278,9 +271,9 @@ export async function donateToCampaign(
 
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") {
-      throw new Error(`Donation transaction reverted on-chain: ${hash}`);
+      throw new Error(`creditBTCSolDonation reverted on-chain: ${hash}`);
     }
-    logger.info(`[contract] Donation confirmed`, { hash, source, txRef });
+    logger.info(`[contract] Donation recorded on-chain`, { hash, sourceChain, txRef });
     return hash;
   });
 }

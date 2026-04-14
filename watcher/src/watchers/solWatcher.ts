@@ -217,7 +217,8 @@ export async function pollSol(): Promise<void> {
 
     // Gap #6: Derive a deterministic EVM pseudo-address for the SOL sender
     const solSender = getSolSenderAddress(tx);
-    const donor = solSender ? deriveDonorAddress("sol", solSender) : undefined;
+    // Derive donor address from sender if known; fall back to signature for uniqueness.
+    const donor = deriveDonorAddress("sol", solSender ?? signature);
 
     // ── Check native SOL ──────────────────────────────────────────────────
     const lamports = getSolReceived(tx);

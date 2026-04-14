@@ -282,6 +282,38 @@ contract AbeokutaCampaign is Ownable, ReentrancyGuard, Pausable {
         _recordDonation(donor, amount, address(usdc), "base");
     }
 
+    /**
+     * @notice Credit a BTC or SOL donation without transferring USDC.
+     * @dev Called by the watcher service when it detects a BTC/SOL deposit to
+     *      the beneficiary's address. The actual funds (BTC/SOL) are already
+     *      with the beneficiary; this records the USDC-equivalent on-chain so
+     *      the donation counts toward the campaign goal and the donor is credited.
+     *
+     *      No USDC is transferred — the watcher needs no float wallet.
+     *      Uses the lightweight recording path (no circuit-breaker array push).
+     *
+     * @param donor          EVM address derived from the BTC/SOL sender
+     * @param usdcEquivalent USD value of the deposit in USDC units (6 decimals)
+     * @param sourceChain    Human-readable source ("bitcoin" or "solana")
+     */
+    function creditBTCSolDonation(
+        address donor,
+        uint256 usdcEquivalent,
+        string calldata sourceChain
+    ) external nonReentrant whenNotPaused onlyWatcher {
+        require(donor != address(0), "Invalid donor");
+        if (usdcEquivalent == 0) revert ZeroAmount();
+        require(usdcEquivalent >= MIN_DONATION, "Below minimum donation");
+        if (usdcEquivalent > 5_000 * 1e6) revert TransactionBlocked();
+        if (totalRaised >= goalMax) revert GoalReached();
+
+        // Lightweight recording — no USDC transfer, no circuit-breaker array push.
+        if (!_isDonor[donor]) { _isDonor[donor] = true; donorCount++; }
+        donorTotalContributed[donor] += usdcEquivalent;
+        totalRaised += usdcEquivalent;
+        emit Donated(donor, usdcEquivalent, address(0), sourceChain);
+    }
+
     // ─────────────────────────────────────────────
     //  Donation — same-chain ERC20 (auto-swap)
     // ─────────────────────────────────────────────

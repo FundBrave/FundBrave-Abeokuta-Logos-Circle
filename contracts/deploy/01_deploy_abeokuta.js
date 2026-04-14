@@ -113,17 +113,16 @@ async function main() {
   const isMainnet = Number(chainId) === 8453;
 
   // SC-M6: Warn loudly if bridge address is zero — cross-chain donations will be disabled
+  // NOTE: We intentionally allow zero on mainnet during initial deploy because the bridge
+  // (FundBraveBridge) must be deployed AFTER this script (it needs the receiver address,
+  // which is immutable in its constructor). After this deploy, run deploy_bridge_abeokuta.js
+  // in fundbrave-main, then call receiver.setBridge(bridgeAddress) to wire them up.
   const bridgeAddress = cfg.bridgeAddress;
   if (!bridgeAddress || bridgeAddress === ethers.ZeroAddress) {
-    if (isMainnet) {
-      throw new Error(
-        "BRIDGE_ADDRESS env var is required for mainnet deployment. " +
-        "Deploy FundBraveBridge on Base first, then set BRIDGE_ADDRESS."
-      );
-    }
     console.warn(
       "⚠  BRIDGE_ADDRESS is not set. Cross-chain donations will be disabled until " +
-      "receiver.setBridge(BRIDGE_ADDRESS) is called after FundBraveBridge is deployed."
+      "receiver.setBridge(BRIDGE_ADDRESS) is called after FundBraveBridge is deployed.\n" +
+      "   This is expected on a fresh mainnet deploy — run deploy_bridge_abeokuta.js next."
     );
   }
 

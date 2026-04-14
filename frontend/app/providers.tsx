@@ -25,8 +25,6 @@ export const statusNetworkTestnet = defineChain({
 });
 
 // Explicit RPC transports — avoids the default public endpoints that get rate-limited.
-// publicnode.com is in the CSP connect-src allowlist (*.publicnode.com).
-// Alchemy keys are optional: set NEXT_PUBLIC_ALCHEMY_KEY in .env.local for higher limits.
 const alchemyKey = process.env.NEXT_PUBLIC_ALCHEMY_KEY;
 const rpc = {
   baseSepolia: alchemyKey
@@ -48,21 +46,16 @@ const config = getDefaultConfig({
     if (!id) throw new Error("NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is required. Get one at https://cloud.walletconnect.com");
     return id;
   })(),
-  // Testnet source chains (sepolia, optimismSepolia) are included so RainbowKit's
-  // network switcher can reach them for cross-chain testing. They are harmless in
-  // mainnet mode since the SOURCE_CHAINS list controls what the donate UI shows.
   chains: [baseSepolia, base, mainnet, polygon, arbitrum, optimism, sepolia, optimismSepolia, statusNetworkTestnet],
-  // Every chain in the chains array above must have an explicit transport entry.
-  // Omitting any chain causes wagmi to receive undefined and crash on destructuring.
   transports: {
     [baseSepolia.id]:            http(rpc.baseSepolia),
     [base.id]:                   http(rpc.base),
     [sepolia.id]:                http(rpc.sepolia),
     [optimismSepolia.id]:        http(rpc.optimismSepolia),
-    [mainnet.id]:                http(),   // viem default
-    [polygon.id]:                http(),   // viem default
-    [arbitrum.id]:               http(),   // viem default
-    [optimism.id]:               http(),   // viem default
+    [mainnet.id]:                http(),
+    [polygon.id]:                http(),
+    [arbitrum.id]:               http(),
+    [optimism.id]:               http(),
     [statusNetworkTestnet.id]:   http("https://public.sepolia.rpc.status.network"),
   },
   ssr: false,

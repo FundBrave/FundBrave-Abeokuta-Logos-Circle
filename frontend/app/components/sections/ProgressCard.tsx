@@ -17,11 +17,16 @@ export function ProgressCard() {
   const totalStaked = stats.totalStakedFormatted;
   const yieldGenerated = stats.totalYieldGeneratedFormatted;
 
-  // Calculate days left from deadline
+  // Calculate days left from deadline.
+  // deadline === 0n means the hook hasn't fetched from the chain yet (SSG/loading).
+  // Show "—" in that case instead of "0 Days Left" to avoid a misleading static value.
   const deadlineTs = Number(stats.deadline);
   const now = Math.floor(Date.now() / 1000);
-  const daysLeft = deadlineTs > now ? Math.ceil((deadlineTs - now) / 86400) : 0;
-  const deadlineDate = deadlineTs
+  const deadlineLoaded = deadlineTs > 0;
+  const daysLeft = deadlineLoaded
+    ? (deadlineTs > now ? Math.ceil((deadlineTs - now) / 86400) : 0)
+    : null;
+  const deadlineDate = deadlineLoaded
     ? new Date(deadlineTs * 1000).toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
@@ -122,12 +127,12 @@ export function ProgressCard() {
               <div className="hidden md:flex flex-col items-end">
                 <div className="flex items-center gap-2 text-tertiary mb-1">
                   <span className="text-sm"><span className="material-symbols-outlined">schedule</span></span>
-                  <span className="text-sm font-bold">
-                    {daysLeft} Days Left
+                  <span className="text-sm font-bold" suppressHydrationWarning>
+                    {daysLeft === null ? "—" : `${daysLeft} Days Left`}
                   </span>
                 </div>
-                <p className="text-on-surface-variant text-xs">
-                  Campaign ends {deadlineDate}
+                <p className="text-on-surface-variant text-xs" suppressHydrationWarning>
+                  {deadlineDate ? `Campaign ends ${deadlineDate}` : "Loading…"}
                 </p>
               </div>
             </div>

@@ -19,8 +19,7 @@ import { config } from "./config";
 import { initStore, verifyAndResolveStalePending } from "./store";
 import { pollBtc } from "./watchers/btcWatcher";
 import { pollSol } from "./watchers/solWatcher";
-import { getFloatBalance, checkRecentDonation, harvestStaking } from "./contract";
-import { formatUnits } from "viem";
+import { getWatcherEthBalance, checkRecentDonation, harvestStaking } from "./contract";
 import { logger } from "./logger";
 
 // ── Health state ───────────────────────────────────────────────────────────────
@@ -44,20 +43,21 @@ async function printStartupInfo(): Promise<void> {
   logger.info(`BTC min confirms  : ${config.btcMinConfirmations}`);
 
   try {
-    const floatBal = await getFloatBalance();
-    logger.info(`Float wallet USDC : ${formatUnits(floatBal, 6)} USDC`);
+    // BTC/SOL donations use creditBTCSolDonation — no USDC float needed, only ETH for gas.
+    const ethBal = await getWatcherEthBalance();
+    const ethBalEther = Number(ethBal) / 1e18;
+    logger.info(`Watcher ETH (gas) : ${ethBalEther.toFixed(6)} ETH`);
 
-    // W-M2: Threshold is 10× minDonationUsd (not a hardcoded 10 USDC)
-    const warnThreshold = BigInt(Math.ceil(config.minDonationUsd * 10)) * 1_000_000n;
-    if (floatBal < warnThreshold) {
+    // Warn if ETH balance is below 0.0005 ETH (enough for ~50 donations at Base gas prices)
+    const ETH_WARN_THRESHOLD = 500_000_000_000_000n; // 0.0005 ETH in wei
+    if (ethBal < ETH_WARN_THRESHOLD) {
       logger.warn(
-        `Float wallet has less than ${formatUnits(warnThreshold, 6)} USDC ` +
-        `(10× min donation) — top up before expecting deposits!`,
-        { balance: formatUnits(floatBal, 6), threshold: formatUnits(warnThreshold, 6) }
+        `Watcher wallet has less than 0.0005 ETH — top up gas before expecting deposits!`,
+        { balance: `${ethBalEther.toFixed(6)} ETH` }
       );
     }
   } catch (err) {
-    logger.error("Could not fetch float wallet balance", { error: String(err) });
+    logger.error("Could not fetch watcher ETH balance", { error: String(err) });
   }
 
   logger.info("=".repeat(60));

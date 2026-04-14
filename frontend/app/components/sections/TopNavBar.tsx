@@ -22,8 +22,13 @@ const MOBILE_LINKS = NAV_LINKS.filter((l) => l.href !== "/");
 export function TopNavBar() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // RainbowKit's ConnectButton renders differently server vs client.
+  // Guard it with `mounted` to prevent hydration mismatch that hides the button.
+  const [mounted, setMounted] = useState(false);
   const navRef = useRef<HTMLElement>(null);
   const pathname = usePathname();
+
+  useEffect(() => { setMounted(true); }, []);
 
   // Lock body scroll when drawer is open
   useEffect(() => {
@@ -119,11 +124,13 @@ export function TopNavBar() {
 
           {/* Right: Wallet + Hamburger */}
           <div className="flex items-center gap-3 ml-auto">
-            <ConnectButton
-              showBalance={false}
-              chainStatus="icon"
-              accountStatus="avatar"
-            />
+            {mounted && (
+              <ConnectButton
+                showBalance={false}
+                chainStatus="icon"
+                accountStatus="avatar"
+              />
+            )}
             <button
               onClick={() => setMobileOpen((v) => !v)}
               className="md:hidden flex items-center justify-center min-w-[44px] min-h-[44px] rounded-lg hover:bg-white/10 transition-colors cursor-pointer"

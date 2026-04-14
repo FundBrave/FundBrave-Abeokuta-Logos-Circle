@@ -198,7 +198,8 @@ export async function pollBtc(): Promise<void> {
 
     // Gap #6: Derive a deterministic EVM pseudo-address for the BTC sender
     const senderAddr = getBtcSenderAddress(tx);
-    const donor = senderAddr ? deriveDonorAddress("btc", senderAddr) : undefined;
+    // Derive donor address from sender if known; fall back to txid for uniqueness.
+    const donor = deriveDonorAddress("btc", senderAddr ?? tx.txid);
 
     try {
       // F-009: Pass onHashReady so the Base tx hash is persisted before receipt confirmation.

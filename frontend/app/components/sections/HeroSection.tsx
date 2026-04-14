@@ -4,7 +4,7 @@ import { useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useGSAP } from "@gsap/react";
-import { gsap, ScrollTrigger } from "../../lib/gsap-config";
+import { gsap } from "../../lib/gsap-config";
 import { GradientButton } from "../ui/GradientButton";
 
 export function HeroSection() {
@@ -16,19 +16,19 @@ export function HeroSection() {
       if (!sectionRef.current || !bgRef.current) return;
 
       // Parallax — desktop only (disabled under 768px for performance)
-      ScrollTrigger.matchMedia({
-        "(min-width: 768px)": () => {
-          gsap.to(bgRef.current!, {
-            yPercent: 20,
-            ease: "none",
-            scrollTrigger: {
-              trigger: sectionRef.current!,
-              start: "top top",
-              end: "bottom top",
-              scrub: true,
-            },
-          });
-        },
+      // gsap.matchMedia() replaces the removed ScrollTrigger.matchMedia() API (GSAP 3.12+)
+      const mm = gsap.matchMedia();
+      mm.add("(min-width: 768px)", () => {
+        gsap.to(bgRef.current!, {
+          yPercent: 20,
+          ease: "none",
+          scrollTrigger: {
+            trigger: sectionRef.current!,
+            start: "top top",
+            end: "bottom top",
+            scrub: true,
+          },
+        });
       });
 
       // Text cascade — plays on load

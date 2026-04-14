@@ -5,3 +5,5 @@
 /watcher/.env
 /.claude
 /fundrave-contracts
+# Local Netlify folder
+.netlify
