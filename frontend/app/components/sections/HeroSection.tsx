@@ -98,7 +98,7 @@ export function HeroSection() {
 
         {/* Subheading */}
         <p className="hero-subtitle text-lg md:text-xl text-on-surface-variant max-w-2xl mb-12 leading-relaxed font-medium">
-          Fund online education for 20–30 women entrepreneurs in Abeokuta
+          Fund online education for 25 women entrepreneurs in Abeokuta
           through Logos, powered by FundBrave.
         </p>
 

@@ -34,27 +34,41 @@ export function Footer() {
       <div className="max-w-[1440px] mx-auto px-6 lg:px-20">
         <div className="flex flex-col md:flex-row justify-between items-center gap-12 mb-16">
           <div className="flex items-center gap-4">
-            <Image
-              src="/images/logo/Fundbrave_icon-gradient.png"
-              alt="FundBrave"
-              width={40}
-              height={40}
-              className="rounded-lg"
-            />
-            <span className="text-2xl font-black text-on-surface font-headline">
-              FundBrave
-            </span>
+            <a
+              href="https://www.fundbrave.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+            >
+              <Image
+                src="/images/logo/Fundbrave_icon-gradient.png"
+                alt="FundBrave"
+                width={40}
+                height={40}
+                className="rounded-lg"
+              />
+              <span className="text-2xl font-black text-on-surface font-headline">
+                FundBrave
+              </span>
+            </a>
             <span className="h-6 w-px bg-outline-variant/30" />
-            <Image
-              src="/images/logo/logos-logo.png"
-              alt="Logos"
-              width={32}
-              height={32}
-              className="rounded-full opacity-80"
-            />
-            <span className="text-xl font-bold text-on-surface-variant/60 font-headline">
-              Logos
-            </span>
+            <a
+              href="https://logos.co/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+            >
+              <Image
+                src="/images/logo/logos-logo.png"
+                alt="Logos"
+                width={32}
+                height={32}
+                className="rounded-full opacity-80"
+              />
+              <span className="text-xl font-bold text-on-surface-variant/60 font-headline">
+                Logos
+              </span>
+            </a>
           </div>
           <div className="flex flex-wrap justify-center gap-8">
             {FOOTER_LINKS.map((link) => (
