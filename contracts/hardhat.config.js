@@ -32,7 +32,9 @@ module.exports = {
 
     // Base Mainnet
     base: {
-      url: `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
+      url: ALCHEMY_API_KEY
+        ? `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`
+        : "https://mainnet.base.org",
       accounts: [PRIVATE_KEY],
       chainId: 8453,
     },

@@ -2,10 +2,13 @@
   "network": "Base Mainnet",
   "chainId": 8453,
   "deployedAt": "2026-04-12T23:40:12.894Z",
-  "AbeokutaCampaign": "0xA710ef60f3E8ED047DE484fDEfA31E6bB493814e",
+  "updatedAt": "2026-04-15T00:00:00.000Z",
+  "AbeokutaCampaign": "0x59f68C0A06fcb0602A5E51A518aF895C2dE82911",
   "AbeokutaStaking": "0x71e38dd95281A0282CC70b9b2977D11760dBf130",
   "AbeokutaBridgeReceiver": "0xb1FE02F5adF22705e6ad394EF812b59DA29d69db",
-  "FundBraveBridge": "0x0000000000000000000000000000000000000000",
+  "AbeokutaCCTPReceiver": "0x9fc55dfEEE7d5492533e0D416Da2daec1b1fDD09",
+  "FundBraveBridge": "0xDFE6A701f0F20eC9bDb4296C1E1D6E99CCF9989A",
+  "CCTPMessageTransmitter": "0xAD09780d193884d503182aD4588450C416D6F9D4",
   "USDC": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   "AavePool": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
   "aUSDC": "0x4e65fE4DbA92790696d040ac24Aa414708F5c0AB",
@@ -15,5 +18,9 @@
   "Deployer": "0x379739a949e5b2Afa2c9CB0555092727725f726C",
   "GoalMinUSDC": 1000,
   "GoalMaxUSDC": 2500,
-  "DeadlineTs": 1781221199
+  "DeadlineTs": 1781221199,
+  "notes": {
+    "bridge": "Transitioning from LayerZero (AbeokutaBridgeReceiver) to CCTP (AbeokutaCCTPReceiver). Timelock proposal submitted 2026-04-15, activates 2026-04-16T23:02:25.000Z. Run executeBridgeContract() after that timestamp.",
+    "campaignNote": "Active campaign is 0x59f68C0A06fcb0602A5E51A518aF895C2dE82911 — the deployment JSON previously had an incorrect address."
+  }
 }

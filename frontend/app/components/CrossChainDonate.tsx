@@ -1,17 +1,14 @@
 "use client";
 
 /**
- * CrossChainDonate
+ * CrossChainDonate — CCTP (Circle Cross-Chain Transfer Protocol)
  *
- * Full UI for cross-chain donations via FundBraveBridge + LayerZero V2.
- * Shown automatically when the user is connected to a non-Base chain.
+ * Shown when the user is on Ethereum, Optimism, or Arbitrum.
  *
- * Flow:
- *   1. User enters USDC amount
- *   2. Fee is quoted from FundBraveBridge.quoteCrossChainAction
- *   3. User clicks "Donate" → hook handles approve (if needed) → sendCrossChainAction
- *   4. LayerZero V2 relays message to Base
- *   5. AbeokutaBridgeReceiver.handleCrossChainDonation → AbeokutaCampaign.creditDonation
+ * Flow (USDC only — no pre-funded pool required):
+ *   Phase 1 (source chain): Approve USDC → depositForBurn → get MessageSent bytes
+ *   Phase 2 (Circle API):   Poll iris-api.circle.com for attestation (~2 min L2, ~13 min ETH)
+ *   Phase 3 (Base):         Switch chain → completeTransfer → campaign.creditDonation
  */
 
 import { useState, useEffect } from "react";
@@ -21,15 +18,16 @@ import {
   AlertCircle,
   ExternalLink,
   ArrowRight,
-  Zap,
+  Clock,
   Info,
 } from "lucide-react";
 import { parseUnits } from "viem";
 import { useAccount, useBalance, useReadContract } from "wagmi";
+import { base } from "wagmi/chains";
 import { useCrossChainDonate } from "../hooks/useCrossChainDonate";
 import { USDC_DECIMALS, ERC20_ABI, getSourceChain, getExplorerUrl } from "../lib/contracts";
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// ─── Step row sub-component ───────────────────────────────────────────────────
 
 function StepRow({ done, active, label }: { done: boolean; active: boolean; label: string }) {
   return (
@@ -53,23 +51,11 @@ interface Props {
 }
 
 const PRESET_AMOUNTS_USDC = [10, 25, 50, 100, 250];
-const PRESET_AMOUNTS_ETH  = [0.005, 0.01, 0.025, 0.05, 0.1];
 
 export function CrossChainDonate({ onSuccess }: Props) {
   const xc = useCrossChainDonate();
   const { address, chain } = useAccount();
-
-  const [mode, setMode]   = useState<"usdc" | "eth">("usdc");
   const [amount, setAmount] = useState("");
-  const [isQuotePending, setIsQuotePending] = useState(false);
-  const [ethPriceUSD, setEthPriceUSD] = useState<number | null>(null);
-
-  // Native balance on the current source chain
-  const { data: nativeBalance } = useBalance({
-    address,
-    chainId: chain?.id,
-    query:   { enabled: !!address, refetchInterval: 10_000 },
-  });
 
   // USDC balance on the current source chain
   const srcUsdcAddress = chain ? getSourceChain(chain.id)?.usdcAddress : undefined;
@@ -85,74 +71,19 @@ export function CrossChainDonate({ onSuccess }: Props) {
     ? (Number(usdcBalanceRaw as bigint) / 10 ** USDC_DECIMALS).toFixed(2)
     : null;
 
-  // ETH price for USD equivalent display
-  useEffect(() => {
-    if (mode !== "eth") return;
-    fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd")
-      .then(r => r.json())
-      .then(d => setEthPriceUSD(d?.ethereum?.usd ?? null))
-      .catch(() => {});
-  }, [mode]);
-
-  const decimals    = mode === "usdc" ? USDC_DECIMALS : 18;
-  // F-010: Use parseUnits() instead of BigInt(Math.floor(parseFloat(amount) * 10 ** decimals)).
-  // The float multiplication overflows Number.MAX_SAFE_INTEGER for 18-decimal tokens,
-  // silently zeroing the least-significant digits. parseUnits() uses string arithmetic.
   const parsedAmount = (() => {
     if (!amount || parseFloat(amount) <= 0) return 0n;
-    try { return parseUnits(amount, decimals); } catch { return 0n; }
+    try { return parseUnits(amount, USDC_DECIMALS); } catch { return 0n; }
   })();
-
-  // For ETH mode: derive a USDC-equivalent amount to feed into quote()
-  // (LayerZero fee is the same regardless of donation token)
-  const quoteAmount = mode === "usdc"
-    ? parsedAmount
-    : ethPriceUSD && parsedAmount > 0n
-      ? BigInt(Math.floor(parseFloat(amount) * ethPriceUSD * 1_000_000))
-      : 1_000_000n; // fallback: quote for $1 so fee loads even before price arrives
-
-  // Auto-quote when amount changes; mark pending immediately on amount change
-  useEffect(() => {
-    if (quoteAmount > 0n && xc.bridgeConfigured) {
-      setIsQuotePending(true);
-    }
-    const t = setTimeout(() => {
-      if (quoteAmount > 0n && xc.bridgeConfigured) {
-        xc.quote(quoteAmount);
-      } else {
-        setIsQuotePending(false);
-      }
-    }, 600); // debounce
-    return () => clearTimeout(t);
-  }, [quoteAmount, xc.bridgeConfigured]);
-
-  // Clear isQuotePending once the quote step finishes (step leaves "quoting")
-  useEffect(() => {
-    if (xc.step !== "quoting") {
-      setIsQuotePending(false);
-    }
-  }, [xc.step]);
 
   // Notify parent on success
   useEffect(() => {
-    if (xc.step === "success") {
-      onSuccess?.(xc.txHash);
-    }
+    if (xc.step === "success") onSuccess?.(xc.txHash);
   }, [xc.step]);
 
-  const nativeSymbol = nativeBalance?.symbol ?? "ETH";
-  const nativeFormatted = nativeBalance
-    ? parseFloat(nativeBalance.formatted).toFixed(4)
-    : null;
-  const ethUsdValue =
-    ethPriceUSD && amount && parseFloat(amount) > 0
-      ? (parseFloat(amount) * ethPriceUSD).toFixed(2)
-      : null;
-
-  // ETH cross-chain requires the source-chain FundBraveBridge to have a funded
-  // swap adapter (ETH → USDC). On mainnets this is a real DEX; on testnets the
-  // mock adapter is not funded, so native donations are not supported.
-  const nativeSupported = chain ? !chain.testnet : false;
+  // Attestation progress display (Ethereum can take up to ~13 min)
+  const waitingForAttestation = xc.step === "waiting_attestation";
+  const sourceIsEthereum = chain?.id === 1;
 
   // ─── Success state ──────────────────────────────────────────────────────────
 
@@ -162,33 +93,27 @@ export function CrossChainDonate({ onSuccess }: Props) {
         <div className="w-14 h-14 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-4">
           <CheckCircle2 className="w-7 h-7 text-green-400" />
         </div>
-        <h3 className="text-xl font-bold text-white mb-2">Cross-chain donation sent!</h3>
+        <h3 className="text-xl font-bold text-white mb-2">Cross-chain donation complete!</h3>
         <p className="text-white/50 text-sm mb-1">
-          Your{" "}
-          <strong className="text-white">
-            {amount} {mode === "eth" ? nativeSymbol : "USDC"}
-          </strong>{" "}
-          donation has been submitted.
+          Your <strong className="text-white">{amount} USDC</strong> donation has been
+          credited to the campaign on Base.
         </p>
         <p className="text-white/40 text-xs mb-6">
-          LayerZero will deliver it to Base in ~2 minutes.
-          It will appear in the campaign feed once confirmed on-chain.
+          Powered by Circle's CCTP — native USDC, no bridges or liquidity pools.
         </p>
-
         {xc.txHash && (
           <a
-            href={getExplorerUrl(xc.txHash)}
+            href={`https://basescan.org/tx/${xc.txHash}`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-center gap-1.5 text-[#2563EB] text-sm hover:underline mb-6"
           >
             <ExternalLink className="w-3.5 h-3.5" />
-            View source transaction
+            View on Base
           </a>
         )}
-
         <button
-          onClick={() => { xc.reset(); setAmount(""); setMode("usdc"); }}
+          onClick={() => { xc.reset(); setAmount(""); }}
           className="btn-secondary w-full text-sm"
         >
           Donate again
@@ -197,32 +122,143 @@ export function CrossChainDonate({ onSuccess }: Props) {
     );
   }
 
-  // ─── Main form ──────────────────────────────────────────────────────────────
+  // ─── Waiting-for-attestation / switch-to-base state ────────────────────────
 
-  const showSteps = xc.step === "approving" || xc.step === "sending" || xc.step === "confirming";
-  // "success" causes an early return above, so TypeScript narrows it out here.
-  // approvalDone is true once we've moved past "approving" to any later step.
-  const approvalDone = xc.step === "sending" || xc.step === "confirming";
+  if (xc.step === "waiting_attestation" || xc.step === "switch_to_base") {
+    const attestationReady = xc.step === "switch_to_base";
+    return (
+      <div className="glass rounded-2xl p-6 space-y-5">
+        <div className="flex items-center gap-3">
+          <Clock className="w-5 h-5 text-[#2563EB] flex-shrink-0" />
+          <h3 className="text-white font-semibold">
+            {attestationReady ? "Attestation ready — switch to Base" : "Waiting for Circle attestation"}
+          </h3>
+        </div>
+
+        {!attestationReady ? (
+          <>
+            <p className="text-white/50 text-sm">
+              Circle's attestation service is signing your cross-chain transfer.
+              This takes <strong className="text-white">
+                {sourceIsEthereum ? "~13 minutes" : "~2 minutes"}
+              </strong> for {xc.sourceChainName}.
+            </p>
+
+            {/* Progress bar */}
+            <div>
+              <div className="flex justify-between text-xs text-white/30 mb-1.5">
+                <span>Waiting for attestation…</span>
+                <span>{xc.attestationProgress}%</span>
+              </div>
+              <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-[#2563EB] rounded-full transition-all duration-1000"
+                  style={{ width: `${xc.attestationProgress}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="bg-white/5 rounded-xl p-4 text-xs text-white/40 space-y-1">
+              <div className="flex justify-between">
+                <span>Amount burned</span>
+                <span className="text-white">{amount} USDC on {xc.sourceChainName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Will be minted on</span>
+                <span className="text-white">Base</span>
+              </div>
+            </div>
+
+            {xc.txHash && (
+              <a
+                href={getExplorerUrl(xc.txHash)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-xs text-white/30 hover:text-white/50 transition-colors"
+              >
+                <ExternalLink className="w-3 h-3" /> View burn transaction
+              </a>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle2 className="w-4 h-4 text-green-400" />
+                <span className="text-green-400 text-sm font-medium">Attestation confirmed by Circle</span>
+              </div>
+              <p className="text-white/50 text-xs">
+                Switch to Base in your wallet, then click below to complete your donation.
+              </p>
+            </div>
+
+            <button
+              onClick={xc.completeMint}
+              disabled={xc.step !== "switch_to_base"}
+              className="btn-primary w-full text-base flex items-center justify-center gap-2"
+            >
+              {chain?.id === base.id ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  Complete donation on Base
+                </>
+              ) : (
+                <>
+                  <ArrowRight className="w-4 h-4" />
+                  Switch to Base & Complete
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={() => xc.reset()}
+              className="w-full text-xs text-white/30 hover:text-white/50 transition-colors"
+            >
+              Cancel and start over
+            </button>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // ─── In-progress step indicators ────────────────────────────────────────────
+
+  const isBurning = xc.step === "approving" || xc.step === "burning";
+
+  // ─── Main form ──────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-5">
       {/* Chain banner */}
       <div className="bg-[#2563EB]/10 border border-[#2563EB]/30 rounded-xl p-4 flex items-start gap-3">
-        <Zap className="w-5 h-5 text-[#2563EB] flex-shrink-0 mt-0.5" />
+        <div className="w-5 h-5 text-[#2563EB] flex-shrink-0 mt-0.5 font-bold text-xs flex items-center justify-center">
+          ⬡
+        </div>
         <div className="flex-1">
           <div className="text-sm font-medium text-white">
-            Cross-chain via LayerZero V2
+            Cross-chain via Circle CCTP
           </div>
           <div className="text-xs text-white/50 mt-0.5">
             Donating from{" "}
             <span className="text-white">
               {xc.sourceChainIcon} {xc.sourceChainName}
             </span>{" "}
-            → Base Sepolia
+            → Base
           </div>
         </div>
         <ArrowRight className="w-4 h-4 text-white/30 mt-0.5" />
         <span className="text-xs text-white/40 mt-0.5">🔵 Base</span>
+      </div>
+
+      {/* CCTP info note */}
+      <div className="bg-white/5 rounded-xl p-3 flex items-start gap-2">
+        <Info className="w-3.5 h-3.5 text-white/30 flex-shrink-0 mt-0.5" />
+        <p className="text-white/40 text-xs">
+          USDC is burned on {xc.sourceChainName} and natively minted on Base by Circle.
+          No bridge fee — just source-chain gas + Base gas to complete.
+          Ethereum takes ~13 min; Optimism/Arbitrum ~2 min.
+        </p>
       </div>
 
       {/* Bridge not configured warning */}
@@ -230,209 +266,111 @@ export function CrossChainDonate({ onSuccess }: Props) {
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3">
           <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
           <p className="text-amber-300 text-xs">
-            The bridge contract for <strong>{xc.sourceChainName}</strong> has not been deployed yet.
-            Switch to Base Sepolia for direct donations, or check back later.
+            CCTP is not configured for <strong>{xc.sourceChainName}</strong>.
+            Switch to Ethereum, Optimism, or Arbitrum, or donate directly on Base.
           </p>
         </div>
       )}
 
-      {/* Token mode toggle */}
-      <div className="flex gap-1 bg-white/5 rounded-xl p-1">
-        <button
-          onClick={() => { setMode("usdc"); setAmount(""); }}
-          disabled={showSteps}
-          className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
-            mode === "usdc"
-              ? "bg-[#2563EB] text-white shadow"
-              : "text-white/50 hover:text-white"
-          }`}
-        >
-          USDC
-        </button>
-        <button
-          onClick={() => { if (nativeSupported) { setMode("eth"); setAmount(""); } }}
-          disabled={showSteps || !nativeSupported}
-          title={!nativeSupported ? "Native ETH donations are not supported on testnets" : undefined}
-          className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all relative ${
-            mode === "eth"
-              ? "bg-[#2563EB] text-white shadow"
-              : nativeSupported
-                ? "text-white/50 hover:text-white"
-                : "text-white/20 cursor-not-allowed"
-          }`}
-        >
-          {nativeSymbol}
-          {!nativeSupported && (
-            <span className="absolute -top-1.5 -right-1 text-[9px] bg-white/10 text-white/40 px-1 rounded">
-              mainnet
-            </span>
-          )}
-        </button>
-      </div>
-      {!nativeSupported && (
-        <p className="text-xs text-white/30 text-center -mt-2">
-          {nativeSymbol} cross-chain requires mainnet bridge liquidity · use USDC on testnet
-        </p>
-      )}
-
-      {/* USDC balance (USDC mode) */}
-      {mode === "usdc" && usdcFormatted !== null && (
+      {/* USDC balance */}
+      {usdcFormatted !== null && (
         <div className="flex items-center justify-between bg-white/5 rounded-xl px-4 py-2.5">
           <span className="text-xs text-white/40">Your USDC balance</span>
-          <span className="text-sm font-medium text-white">
-            {usdcFormatted} USDC
-          </span>
-        </div>
-      )}
-
-      {/* Native balance (ETH mode) */}
-      {mode === "eth" && nativeFormatted !== null && (
-        <div className="flex items-center justify-between bg-white/5 rounded-xl px-4 py-2.5">
-          <span className="text-xs text-white/40">Your {nativeSymbol} balance</span>
-          <span className="text-sm font-medium text-white">
-            {nativeFormatted} {nativeSymbol}
-          </span>
+          <span className="text-sm font-medium text-white">{usdcFormatted} USDC</span>
         </div>
       )}
 
       {/* Amount input */}
       <div>
-        <label className="block text-sm text-white/60 mb-2">
-          Amount ({mode === "usdc" ? "USDC" : nativeSymbol})
-        </label>
+        <label className="block text-sm text-white/60 mb-2">Amount (USDC)</label>
         <div className="relative">
           <input
             type="text"
             inputMode="decimal"
             value={amount}
             onChange={(e) => {
-              const sanitized = e.target.value.replace(/[^0-9.]/g, "");
-              const parts = sanitized.split(".");
-              setAmount(parts.length > 2 ? parts[0] + "." + parts.slice(1).join("") : sanitized);
+              const s = e.target.value.replace(/[^0-9.]/g, "");
+              const p = s.split(".");
+              setAmount(p.length > 2 ? p[0] + "." + p.slice(1).join("") : s);
             }}
             placeholder="0.00"
-            disabled={showSteps}
+            disabled={isBurning || xc.step === "minting"}
             className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-lg font-medium focus:outline-none focus:border-[#2563EB] transition-colors pr-20 disabled:opacity-50"
           />
           <span className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40 font-medium">
-            {mode === "usdc" ? "USDC" : nativeSymbol}
+            USDC
           </span>
         </div>
 
-        {/* USD equivalent for ETH mode */}
-        {mode === "eth" && ethUsdValue && (
-          <p className="text-xs text-white/40 mt-1.5 text-right">≈ ${ethUsdValue} USD</p>
-        )}
-
         {/* Preset amounts */}
         <div className="flex gap-2 mt-3 flex-wrap">
-          {mode === "usdc"
-            ? PRESET_AMOUNTS_USDC.map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setAmount(p.toString())}
-                  disabled={showSteps}
-                  className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-1.5 text-white/60 hover:text-white transition-all disabled:opacity-40"
-                >
-                  ${p}
-                </button>
-              ))
-            : PRESET_AMOUNTS_ETH.map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setAmount(p.toString())}
-                  disabled={showSteps}
-                  className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-1.5 text-white/60 hover:text-white transition-all disabled:opacity-40"
-                >
-                  {p} {nativeSymbol}
-                </button>
-              ))
-          }
+          {PRESET_AMOUNTS_USDC.map((p) => (
+            <button
+              key={p}
+              onClick={() => setAmount(p.toString())}
+              disabled={isBurning}
+              className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-1.5 text-white/60 hover:text-white transition-all disabled:opacity-40"
+            >
+              ${p}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Fee display */}
+      {/* Cost breakdown */}
       {parsedAmount > 0n && (
         <div className="glass rounded-xl p-4 space-y-2.5">
           <div className="flex items-center justify-between text-sm">
             <span className="text-white/50">Donation amount</span>
-            <span className="text-white font-medium">
-              {amount} {mode === "usdc" ? "USDC" : nativeSymbol}
-              {mode === "eth" && ethUsdValue && (
-                <span className="text-white/40 font-normal text-xs ml-1">(≈${ethUsdValue})</span>
-              )}
-            </span>
+            <span className="text-white font-medium">{amount} USDC</span>
           </div>
           <div className="flex items-center justify-between text-sm">
-            <span className="flex items-center gap-1 text-white/50">
-              LayerZero fee
-              <Info className="w-3 h-3 text-white/30" />
-            </span>
-            {xc.step === "quoting" ? (
-              <span className="flex items-center gap-1 text-white/40 text-xs">
-                <Loader2 className="w-3 h-3 animate-spin" /> Estimating…
-              </span>
-            ) : xc.lzFee > 0n ? (
-              <span className="text-white font-medium">
-                ~{parseFloat(xc.lzFeeEth).toFixed(6)} {xc.nativeCurrency}
-              </span>
-            ) : (
-              <span className="text-white/30 text-xs">Enter amount above</span>
-            )}
+            <span className="text-white/50">Bridge fee</span>
+            <span className="text-green-400 font-medium text-xs">None (CCTP is free)</span>
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-white/50">Gas (source chain)</span>
+            <span className="text-white/40 text-xs">~$0.10–$2 in {xc.nativeCurrency}</span>
           </div>
           <div className="border-t border-white/10 pt-2 flex items-center justify-between text-sm">
-            <span className="text-white/60 font-medium">You pay</span>
-            <span className="text-white font-bold">
-              {mode === "usdc" ? (
-                <>
-                  {amount} USDC{" "}
-                  {xc.lzFee > 0n && (
-                    <span className="text-white/50 font-normal text-xs">
-                      + ~{parseFloat(xc.lzFeeEth).toFixed(6)} {xc.nativeCurrency}
-                    </span>
-                  )}
-                </>
-              ) : (
-                <>
-                  {xc.lzFee > 0n
-                    ? `~${(parseFloat(amount) + parseFloat(xc.lzFeeEth)).toFixed(6)}`
-                    : amount}{" "}
-                  {nativeSymbol}
-                  <span className="text-white/40 font-normal text-xs ml-1">
-                    (donation + LZ fee)
-                  </span>
-                </>
-              )}
-            </span>
+            <span className="text-white/60 font-medium">Campaign receives</span>
+            <span className="text-white font-bold">{amount} USDC</span>
           </div>
         </div>
       )}
 
-      {/* Step indicators */}
-      {showSteps && (
+      {/* Step indicators during burn */}
+      {isBurning && (
         <div className="glass rounded-xl p-4 space-y-3">
-          {mode === "usdc" && (
-            <StepRow
-              done={approvalDone}
-              active={xc.step === "approving"}
-              label={xc.step === "approving" ? "Approving USDC spend…" : "USDC approved"}
-            />
-          )}
-          {/* done=false: "success" step triggers the early return above, so this row is never in "done" state */}
+          <StepRow
+            done={xc.step === "burning"}
+            active={xc.step === "approving"}
+            label={xc.step === "approving" ? "Approving USDC spend…" : "USDC approved"}
+          />
           <StepRow
             done={false}
-            active={xc.step === "sending" || xc.step === "confirming"}
-            label={
-              xc.step === "sending"    ? "Submitting bridge transaction…" :
-              xc.step === "confirming" ? "Waiting for confirmation…" :
-              "Donation sent via bridge"
-            }
+            active={xc.step === "burning"}
+            label={xc.step === "burning" ? "Burning USDC on source chain…" : "Burn pending"}
           />
           <StepRow
             done={false}
             active={false}
-            label="LayerZero relays to Base (~2 min)"
+            label="Waiting for Circle attestation"
           />
+          <StepRow
+            done={false}
+            active={false}
+            label="Complete mint on Base"
+          />
+        </div>
+      )}
+
+      {/* Minting step (Phase 3) */}
+      {xc.step === "minting" && (
+        <div className="glass rounded-xl p-4 space-y-3">
+          <StepRow done={true}  active={false} label="USDC burned on source chain" />
+          <StepRow done={true}  active={false} label="Circle attestation received" />
+          <StepRow done={false} active={true}  label="Minting USDC on Base…" />
         </div>
       )}
 
@@ -454,32 +392,25 @@ export function CrossChainDonate({ onSuccess }: Props) {
 
       {/* CTA button */}
       <button
-        onClick={() =>
-          mode === "eth"
-            ? xc.executeNative(parsedAmount)
-            : xc.execute(parsedAmount)
-        }
+        onClick={() => xc.execute(parsedAmount)}
         disabled={
           !amount ||
           parsedAmount === 0n ||
           xc.isProcessing ||
-          isQuotePending ||          // FE-H3: block during 600ms debounce gap
-          xc.step === "quoting" ||   // also block while quote is in flight
-          !xc.bridgeConfigured ||
-          xc.lzFee === 0n
+          !xc.bridgeConfigured
         }
         className="btn-primary w-full text-base disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
       >
         {xc.isProcessing ? (
           <>
             <Loader2 className="w-4 h-4 animate-spin" />
-            {xc.step === "approving"  ? "Approving USDC…"    :
-             xc.step === "sending"    ? "Sending via bridge…" :
-             xc.step === "confirming" ? "Confirming…"         : "Processing…"}
+            {xc.step === "approving" ? "Approving USDC…" :
+             xc.step === "burning"   ? "Burning USDC…"  :
+             xc.step === "minting"   ? "Minting on Base…" : "Processing…"}
           </>
         ) : (
           <>
-            Donate {amount ? `${amount} ${mode === "usdc" ? "USDC" : nativeSymbol}` : ""} via Bridge
+            Donate {amount ? `${amount} USDC` : ""} via CCTP
             <ArrowRight className="w-4 h-4" />
           </>
         )}
@@ -487,8 +418,8 @@ export function CrossChainDonate({ onSuccess }: Props) {
 
       {/* Info footer */}
       <p className="text-center text-white/25 text-xs">
-        LayerZero V2 cross-chain message · Arrives on Base in ~2 minutes ·
-        All USDC goes to the campaign multisig
+        Circle CCTP · USDC burned on {xc.sourceChainName || "source chain"}, minted on Base ·
+        100% goes to the campaign
       </p>
     </div>
   );

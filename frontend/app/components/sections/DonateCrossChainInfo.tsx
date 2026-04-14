@@ -4,10 +4,9 @@ import { useState } from "react";
 import { TokenIcon } from "../ui/TokenIcon";
 
 const SUPPORTED_CHAINS = [
-  { name: "Ethereum",        icon: "ETH" },
-  { name: "Polygon",         icon: "POLYGON" },
-  { name: "Arbitrum",        icon: "ARBITRUM" },
-  { name: "Optimism",        icon: "OPTIMISM" },
+  { name: "Ethereum",  icon: "ETH" },
+  { name: "Arbitrum",  icon: "ARBITRUM" },
+  { name: "Optimism",  icon: "OPTIMISM" },
 ];
 
 export function DonateCrossChainInfo() {
@@ -37,10 +36,11 @@ export function DonateCrossChainInfo() {
         <div className="px-4 pb-5 pt-1 space-y-4 bg-surface-container-low/30">
           {/* How it works */}
           <p className="text-xs text-on-surface-variant leading-relaxed">
-            You can donate USDC directly from Ethereum, Polygon, Arbitrum, or
-            Optimism — no manual bridging needed. The donation is routed to Base
-            automatically via{" "}
-            <span className="text-primary font-semibold">LayerZero V2</span>.
+            You can donate USDC directly from Ethereum, Arbitrum, or Optimism —
+            no manual bridging needed. USDC is burned on your chain and natively
+            minted on Base via{" "}
+            <span className="text-primary font-semibold">Circle CCTP</span>, so
+            no bridge liquidity pool is involved.
           </p>
 
           {/* Supported chains */}
@@ -60,7 +60,7 @@ export function DonateCrossChainInfo() {
           <ol className="space-y-2 text-xs text-on-surface-variant">
             <li className="flex gap-3">
               <span className="shrink-0 w-5 h-5 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-[10px]">1</span>
-              <span>Switch your wallet network to Ethereum, Polygon, Arbitrum, or Optimism.</span>
+              <span>Switch your wallet to Ethereum, Arbitrum, or Optimism.</span>
             </li>
             <li className="flex gap-3">
               <span className="shrink-0 w-5 h-5 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-[10px]">2</span>
@@ -68,15 +68,19 @@ export function DonateCrossChainInfo() {
             </li>
             <li className="flex gap-3">
               <span className="shrink-0 w-5 h-5 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-[10px]">3</span>
-              <span>Approve USDC, then confirm. A small LayerZero messaging fee (paid in native gas) is added on top — your donation arrives on Base within a few minutes.</span>
+              <span>Approve USDC, then confirm the burn. Circle's attestation service signs the transfer — takes ~2 min on Arbitrum/Optimism, ~13 min on Ethereum.</span>
+            </li>
+            <li className="flex gap-3">
+              <span className="shrink-0 w-5 h-5 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-[10px]">4</span>
+              <span>Once attested, switch to Base and click "Complete donation" to mint USDC and credit your donation.</span>
             </li>
           </ol>
 
           {/* Fee note */}
-          <div className="flex items-start gap-2 bg-amber-500/8 border border-amber-500/20 rounded-lg px-3 py-2">
-            <span className="material-symbols-outlined text-amber-400 text-sm mt-0.5">info</span>
-            <p className="text-xs text-amber-300/80">
-              The LayerZero fee is typically $0.50–$2 in native gas (ETH/MATIC) and is shown before you confirm.
+          <div className="flex items-start gap-2 bg-emerald-500/8 border border-emerald-500/20 rounded-lg px-3 py-2">
+            <span className="material-symbols-outlined text-emerald-400 text-sm mt-0.5">check_circle</span>
+            <p className="text-xs text-emerald-300/80">
+              No bridge fee. You only pay source-chain gas to burn and Base gas to mint — Circle's CCTP has no protocol fee.
             </p>
           </div>
         </div>

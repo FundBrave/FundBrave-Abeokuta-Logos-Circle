@@ -97,7 +97,7 @@ export function ImpactModels() {
                 ))}
               </div>
               <p className="text-[10px] text-on-surface-variant/40 mt-2">
-                Cross-chain via LayerZero V2 · BTC &amp; SOL monitored by watcher
+                Cross-chain via Circle CCTP · BTC &amp; SOL monitored by watcher
               </p>
             </div>
 

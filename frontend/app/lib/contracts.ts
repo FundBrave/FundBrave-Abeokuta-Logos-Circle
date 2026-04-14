@@ -147,120 +147,115 @@ export const SUPPORTED_TOKENS: TokenInfo[] = [
   },
 ];
 
-// ─── LayerZero destination EIDs ──────────────────────────────────────────────
+// ─── CCTP (Circle Cross-Chain Transfer Protocol) ─────────────────────────────
+//
+// CCTP burns USDC on the source chain and natively mints it on Base.
+// No pre-funded liquidity pool is needed — Circle's attestation service handles it.
 
-export const DST_EID_BASE_SEPOLIA = 40245;   // testnet
-export const DST_EID_BASE         = 30184;   // mainnet
-export const DST_EID              = DST_EID_BASE_SEPOLIA; // switch to mainnet when ready
+/** AbeokutaCCTPReceiver on Base mainnet — receives minted USDC from Circle */
+export const CCTP_BASE_RECEIVER_ADDRESS: Address =
+  requireAddress(
+    "NEXT_PUBLIC_CCTP_RECEIVER_ADDRESS",
+    process.env.NEXT_PUBLIC_CCTP_RECEIVER_ADDRESS,
+    // Fallback to deployed address (update after redeployment)
+    "0x9fc55dfEEE7d5492533e0D416Da2daec1b1fDD09"
+  );
+
+/** CCTP domain ID for Base (destination chain) */
+export const CCTP_BASE_DOMAIN = 6;
 
 // ─── Source chains for cross-chain donations ──────────────────────────────────
 
 export interface SourceChain {
   name:        string;
   chainId:     number;
-  lzEid:       number;   // LayerZero endpoint ID (used by THIS chain as source)
+  lzEid:       number;   // kept for reference; CCTP uses tokenMessengerAddress instead
   icon:        string;
   usdcAddress: Address;  // USDC contract on this chain
-  bridgeAddress: Address; // FundBraveBridge deployed on this chain
+  bridgeAddress: Address; // FundBraveBridge (legacy LayerZero, kept for reference)
+  /** CCTP TokenMessenger address on this source chain */
+  tokenMessengerAddress: Address;
   nativeCurrency: string;
 }
 
 export const SOURCE_CHAINS: SourceChain[] = [
   {
-    name:           "Base Sepolia",
-    chainId:        84532,
-    lzEid:          40245,
-    icon:           "🔵",
-    usdcAddress:    (process.env.NEXT_PUBLIC_USDC_ADDRESS   || "0xf269f54304f8DB2dB613341CC7E189B02BEf98dE") as Address,
-    bridgeAddress:  (process.env.NEXT_PUBLIC_BRIDGE_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
-    nativeCurrency: "ETH",
+    name:                  "Base Sepolia",
+    chainId:               84532,
+    lzEid:                 40245,
+    icon:                  "🔵",
+    usdcAddress:           (process.env.NEXT_PUBLIC_USDC_ADDRESS   || "0xf269f54304f8DB2dB613341CC7E189B02BEf98dE") as Address,
+    bridgeAddress:         (process.env.NEXT_PUBLIC_BRIDGE_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
+    // CCTP: Circle testnet TokenMessenger on Base Sepolia (USDC only)
+    tokenMessengerAddress: "0x9f3B8679c73C2Fef8b59B4f3444d4e156fb70AA5" as Address,
+    nativeCurrency:        "ETH",
   },
   {
-    name:           "Base",
-    chainId:        8453,
-    lzEid:          30184,
-    icon:           "🔵",
-    usdcAddress:    "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address,
-    bridgeAddress:  (process.env.NEXT_PUBLIC_BRIDGE_BASE_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
-    nativeCurrency: "ETH",
+    name:                  "Base",
+    chainId:               8453,
+    lzEid:                 30184,
+    icon:                  "🔵",
+    usdcAddress:           "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address,
+    bridgeAddress:         (process.env.NEXT_PUBLIC_BRIDGE_BASE_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
+    // Same-chain Base donations use direct donateUSDC — no CCTP needed
+    tokenMessengerAddress: "0x0000000000000000000000000000000000000000" as Address,
+    nativeCurrency:        "ETH",
   },
   {
-    name:           "Ethereum",
-    chainId:        1,
-    lzEid:          30101,
-    icon:           "⟠",
-    usdcAddress:    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as Address,
-    bridgeAddress:  (process.env.NEXT_PUBLIC_BRIDGE_ETHEREUM_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
-    nativeCurrency: "ETH",
+    name:                  "Ethereum",
+    chainId:               1,
+    lzEid:                 30101,
+    icon:                  "⟠",
+    usdcAddress:           "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as Address,
+    bridgeAddress:         (process.env.NEXT_PUBLIC_BRIDGE_ETHEREUM_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
+    // CCTP V1 TokenMessenger on Ethereum mainnet
+    tokenMessengerAddress: "0xBd3fa81B58Ba92a82136038B25aDec7066af3155" as Address,
+    nativeCurrency:        "ETH",
   },
   {
-    name:           "Polygon",
-    chainId:        137,
-    lzEid:          30109,
-    icon:           "🟣",
-    usdcAddress:    "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359" as Address,
-    bridgeAddress:  (process.env.NEXT_PUBLIC_BRIDGE_POLYGON_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
-    nativeCurrency: "MATIC",
+    name:                  "Optimism",
+    chainId:               10,
+    lzEid:                 30111,
+    icon:                  "🔴",
+    usdcAddress:           "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85" as Address,
+    bridgeAddress:         (process.env.NEXT_PUBLIC_BRIDGE_OPTIMISM_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
+    // CCTP V1 TokenMessenger on Optimism mainnet
+    tokenMessengerAddress: "0x2B4069517957735bE00ceE0fadAE88a26365528f" as Address,
+    nativeCurrency:        "ETH",
   },
   {
-    name:           "Arbitrum",
-    chainId:        42161,
-    lzEid:          30110,
-    icon:           "🔷",
-    usdcAddress:    "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" as Address,
-    bridgeAddress:  (process.env.NEXT_PUBLIC_BRIDGE_ARBITRUM_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
-    nativeCurrency: "ETH",
+    name:                  "Arbitrum",
+    chainId:               42161,
+    lzEid:                 30110,
+    icon:                  "🔷",
+    usdcAddress:           "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" as Address,
+    bridgeAddress:         (process.env.NEXT_PUBLIC_BRIDGE_ARBITRUM_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
+    // CCTP V1 TokenMessenger on Arbitrum mainnet
+    tokenMessengerAddress: "0x19330d10D9Cc8751218eaf51E8885D058642E08A" as Address,
+    nativeCurrency:        "ETH",
   },
-  {
-    name:           "Optimism",
-    chainId:        10,
-    lzEid:          30111,
-    icon:           "🔴",
-    usdcAddress:    "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85" as Address,
-    bridgeAddress:  (process.env.NEXT_PUBLIC_BRIDGE_OPTIMISM_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
-    nativeCurrency: "ETH",
-  },
-  // ── Status Network Testnet ───────────────────────────────────────────────────
-  // Logos/Status L2 testnet. LayerZero V2 is not yet deployed on Status Network,
-  // so bridgeAddress defaults to zero — the UI shows a "bridge not configured" banner.
-  // Once LZ is available: deploy FundBraveBridge on Status Network and set
-  // NEXT_PUBLIC_BRIDGE_STATUS_ADDRESS to enable cross-chain donations from there.
+  // ── Testnet source chains (only active when targeting Base Sepolia) ─────────
+  // For testnet, we use Circle's CCTP testnet token messenger addresses.
   ...((TARGET_CHAIN_ID as number) === 84532 ? [
     {
-      name:           "Status Network",
-      chainId:        1660990954,
-      lzEid:          0,   // LayerZero endpoint not yet deployed on Status Network testnet
-      icon:           "🔷",
-      usdcAddress:    (process.env.NEXT_PUBLIC_STATUS_USDC_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
-      bridgeAddress:  (process.env.NEXT_PUBLIC_BRIDGE_STATUS_ADDRESS || "0x0000000000000000000000000000000000000000") as Address,
-      nativeCurrency: "ETH",
-    },
-  ] as SourceChain[] : []),
-
-  // ── Other testnet source chains (only active when targeting Base Sepolia) ────
-  // These use the mock USDC and FundBraveBridge deployed by 02_deploy_source_bridge.js.
-  // Included here so getSourceChain(11155111/11155420) resolves correctly when a user
-  // switches to these chains in the testnet donate flow.
-  ...((TARGET_CHAIN_ID as number) === 84532 ? [
-    {
-      name:           "Ethereum Sepolia",
-      chainId:        11155111,
-      lzEid:          40161,
-      icon:           "⟠",
-      // MockUSDC deployed by 02_deploy_source_bridge.js on Ethereum Sepolia
-      usdcAddress:    "0x601566d18cdaE8D4347bB6ba43C5C2247D9c1f5a" as Address,
-      bridgeAddress:  "0xbf07FCC10F057E897B2e67982d990701E7434e50" as Address,
-      nativeCurrency: "ETH",
+      name:                  "Ethereum Sepolia",
+      chainId:               11155111,
+      lzEid:                 40161,
+      icon:                  "⟠",
+      usdcAddress:           "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as Address, // Circle testnet USDC on ETH Sepolia
+      bridgeAddress:         "0x0000000000000000000000000000000000000000" as Address,
+      tokenMessengerAddress: "0x9f3B8679c73C2Fef8b59B4f3444d4e156fb70AA5" as Address, // CCTP testnet TokenMessenger
+      nativeCurrency:        "ETH",
     },
     {
-      name:           "Optimism Sepolia",
-      chainId:        11155420,
-      lzEid:          40232,
-      icon:           "🔴",
-      // MockUSDC deployed by 02_deploy_source_bridge.js on Optimism Sepolia
-      usdcAddress:    "0xf1d8e639A2402eD519055326468F99DCfCB3e74b" as Address,
-      bridgeAddress:  "0xB3aA5B4c39e7D0A67fC986A4F442d93E17fF26B6" as Address,
-      nativeCurrency: "ETH",
+      name:                  "Optimism Sepolia",
+      chainId:               11155420,
+      lzEid:                 40232,
+      icon:                  "🔴",
+      usdcAddress:           "0x5fd84259d66Cd46123540766Be93DFE6D43130D7" as Address, // Circle testnet USDC on OP Sepolia
+      bridgeAddress:         "0x0000000000000000000000000000000000000000" as Address,
+      tokenMessengerAddress: "0x9f3B8679c73C2Fef8b59B4f3444d4e156fb70AA5" as Address, // CCTP testnet TokenMessenger
+      nativeCurrency:        "ETH",
     },
   ] as SourceChain[] : []),
 ];
@@ -726,5 +721,62 @@ export const BRIDGE_ABI = [
       { name: "_nativeAmount",  type: "uint256" },
     ],
     outputs: [],
+  },
+] as const;
+
+// ─── CCTP ABIs ────────────────────────────────────────────────────────────────
+
+/**
+ * AbeokutaCCTPReceiver ABI — the completeTransfer function called on Base
+ * to finish a CCTP cross-chain donation.
+ */
+export const CCTP_RECEIVER_ABI = [
+  {
+    name: "completeTransfer",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "message",     type: "bytes"   },
+      { name: "attestation", type: "bytes"   },
+      { name: "donor",       type: "address" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "processed",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "transferHash", type: "bytes32" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    name: "CCTPDonationReceived",
+    type: "event",
+    inputs: [
+      { name: "donor",        type: "address", indexed: true  },
+      { name: "amount",       type: "uint256", indexed: false },
+      { name: "sourceDomain", type: "uint32",  indexed: false },
+      { name: "chainName",    type: "string",  indexed: false },
+      { name: "transferHash", type: "bytes32", indexed: true  },
+    ],
+  },
+] as const;
+
+/**
+ * Circle CCTP V1 TokenMessenger ABI — the depositForBurn function called on
+ * source chains (Ethereum, Optimism, Arbitrum) to initiate a cross-chain transfer.
+ */
+export const TOKEN_MESSENGER_ABI = [
+  {
+    name: "depositForBurn",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "amount",            type: "uint256" },
+      { name: "destinationDomain", type: "uint32"  },
+      { name: "mintRecipient",     type: "bytes32" },
+      { name: "burnToken",         type: "address" },
+    ],
+    outputs: [{ name: "nonce", type: "uint64" }],
   },
 ] as const;

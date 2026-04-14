@@ -315,14 +315,15 @@ export default function DonatePage() {
                     <span>
                       Balance: {(Number(tokenBalanceData) / 10 ** selectedToken.decimals).toFixed(selectedToken.decimals === 6 ? 2 : 4)} {displaySymbol}
                     </span>
-                    {/* Testnet faucet */}
+                    {/* Testnet faucet  
                     <button
                       onClick={() => handleMintTestToken(selectedToken.address as Address, BigInt(1000) * BigInt(10 ** selectedToken.decimals))}
                       disabled={isMinting}
                       className="text-primary hover:text-primary-fixed-dim transition-colors cursor-pointer disabled:opacity-40"
                     >
                       {isMinting ? "Minting…" : `Mint 1,000 ${displaySymbol} (testnet)`}
-                    </button>
+                    </button>*/}
+                    <div></div>
                   </div>
                 )}
 

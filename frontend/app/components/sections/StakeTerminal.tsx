@@ -190,11 +190,7 @@ export function StakeTerminal({
             <div>
               <p className="text-on-surface text-sm font-medium">
                 <span className="text-primary font-bold">
-                  ~{staking.causeSharePct} (
-                  {formatUSDC(
-                    (parsedAmount * staking.causeShareBps) / 10000n
-                  )}{" "}
-                  USDC)
+                  ~{staking.causeSharePct}
                 </span>{" "}
                 of your yield will support the campaign.
               </p>

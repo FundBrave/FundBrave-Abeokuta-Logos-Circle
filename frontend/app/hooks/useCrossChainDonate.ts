@@ -1,230 +1,289 @@
 "use client";
 
 /**
- * useCrossChainDonate
+ * useCrossChainDonate — CCTP (Circle Cross-Chain Transfer Protocol)
  *
- * Handles the full LayerZero cross-chain donation flow:
- *  1. Quote LZ fee  →  quoteCrossChainAction
- *  2. Approve USDC  →  ERC20.approve(bridgeAddress, amount)
- *  3. Send           →  sendCrossChainAction(dstEid, 0, 0, usdcAddress, amount)
- *                       with msg.value = nativeFee
+ * Full cross-chain donation flow:
+ *   Phase 1 (source chain — Ethereum / Optimism / Arbitrum):
+ *     1. Approve USDC to source TokenMessenger (if allowance < amount)
+ *     2. Call TokenMessenger.depositForBurn(amount, BASE_DOMAIN, receiverAddress, usdc)
+ *     3. Read the MessageSent event → extract raw `message` bytes
  *
- * The hook auto-skips the approve step if allowance is already sufficient.
+ *   Phase 2 (off-chain — Circle's attestation API):
+ *     4. Poll iris-api.circle.com/v1/attestations/{keccak256(message)} every 10s
+ *     5. When status = "complete", store the attestation hex
+ *
+ *   Phase 3 (Base chain):
+ *     6. Prompt user to switch to Base
+ *     7. Call AbeokutaCCTPReceiver.completeTransfer(message, attestation, donor)
+ *
+ * Unlike LayerZero, CCTP requires no pre-funded pool and no LZ messaging fee.
+ * The only costs are source-chain gas for the burn and Base gas for the mint.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   useAccount,
   useReadContract,
   useWriteContract,
   useWaitForTransactionReceipt,
+  useSwitchChain,
+  usePublicClient,
 } from "wagmi";
-import { parseUnits, formatUnits } from "viem";
-import type { Address } from "viem";
+import { keccak256, parseUnits, formatUnits } from "viem";
+import type { Address, Log } from "viem";
+import { base } from "wagmi/chains";
 import {
-  BRIDGE_ABI,
   ERC20_ABI,
-  DST_EID,
   getSourceChain,
+  CCTP_RECEIVER_ABI,
+  TOKEN_MESSENGER_ABI,
+  CCTP_BASE_RECEIVER_ADDRESS,
+  CCTP_BASE_DOMAIN,
 } from "../lib/contracts";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type CrossChainStep =
   | "idle"
-  | "quoting"
   | "approving"
-  | "sending"
-  | "confirming"
+  | "burning"
+  | "waiting_attestation"
+  | "switch_to_base"
+  | "minting"
   | "success"
   | "error";
 
 export interface CrossChainDonateState {
-  step:        CrossChainStep;
-  lzFee:       bigint;           // native token fee for LayerZero message
-  lzFeeEth:    string;           // formatted for display (e.g. "0.001")
-  txHash:      `0x${string}` | undefined;
-  errorMsg:    string;
+  step:         CrossChainStep;
+  txHash:       `0x${string}` | undefined;
+  errorMsg:     string;
   isProcessing: boolean;
+  attestationProgress: number;   // 0–100 poll progress
 
   // Actions
-  quote:         (amountUsdc: bigint) => void;
-  execute:       (amountUsdc: bigint) => void;
-  executeNative: (amountWei: bigint)  => void;  // native ETH cross-chain donation
-  reset:         () => void;
+  execute:  (amountUsdc: bigint) => void;
+  completeMint: () => void;      // called by UI after user switches to Base
+  reset:    () => void;
 
-  // Derived info about current chain
-  sourceChainName:   string;
-  sourceChainIcon:   string;
-  nativeCurrency:    string;
-  bridgeConfigured:  boolean;  // false if bridge address is zero
+  // Derived info
+  sourceChainName:  string;
+  sourceChainIcon:  string;
+  nativeCurrency:   string;
+  bridgeConfigured: boolean;
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── CCTP constants ───────────────────────────────────────────────────────────
 
-// action enum value for DONATE in FundBraveBridge
-const ACTION_DONATE = 0;
-// fundraiser ID — ignored by AbeokutaBridgeReceiver but required by ABI
-const FUNDRAISER_ID = 0n;
+const ATTESTATION_POLL_INTERVAL_MS = 10_000;  // 10 s between polls
+const ATTESTATION_MAX_POLLS = 90;             // 15 min max for Ethereum (~13 min avg)
+
+// Circle's Iris attestation API (no API key required)
+function attestationUrl(messageHash: string): string {
+  return `https://iris-api.circle.com/v1/attestations/${messageHash}`;
+}
+
+// ─── MessageSent event ABI (emitted by Circle's MessageTransmitter on source chain) ──
+
+const MESSAGE_TRANSMITTER_ABI = [
+  {
+    name:   "MessageSent",
+    type:   "event",
+    inputs: [{ name: "message", type: "bytes", indexed: false }],
+  },
+] as const;
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useCrossChainDonate(): CrossChainDonateState {
   const { address, chain } = useAccount();
+  const { switchChain }    = useSwitchChain();
+  const publicClient       = usePublicClient();
 
-  const srcChain = chain ? getSourceChain(chain.id) : undefined;
-  const bridgeAddress   = srcChain?.bridgeAddress   ?? ("0x0000000000000000000000000000000000000000" as Address);
-  const usdcAddress     = srcChain?.usdcAddress     ?? ("0x0000000000000000000000000000000000000000" as Address);
-  const bridgeConfigured = bridgeAddress !== "0x0000000000000000000000000000000000000000";
+  const srcChain         = chain ? getSourceChain(chain.id) : undefined;
+  const bridgeConfigured = !!srcChain?.tokenMessengerAddress &&
+    srcChain.tokenMessengerAddress !== "0x0000000000000000000000000000000000000000";
 
-  // ─── State ──────────────────────────────────────────────────────────────────
+  // ─── State ─────────────────────────────────────────────────────────────────
 
-  const [step,      setStep]      = useState<CrossChainStep>("idle");
-  const [lzFee,     setLzFee]     = useState<bigint>(0n);
-  const [errorMsg,  setErrorMsg]  = useState("");
-  const [txHash,    setTxHash]    = useState<`0x${string}` | undefined>(undefined);
+  const [step,         setStep]         = useState<CrossChainStep>("idle");
+  const [txHash,       setTxHash]       = useState<`0x${string}` | undefined>(undefined);
+  const [errorMsg,     setErrorMsg]     = useState("");
   const [pendingAmount, setPendingAmount] = useState<bigint>(0n);
-  const [phase, setPhase] = useState<"approve" | "send">("approve");
+  const [phase,        setPhase]        = useState<"approve" | "burn">("approve");
 
-  // ─── Reads ──────────────────────────────────────────────────────────────────
+  // Attestation state — persisted across chain switch
+  const [messageBytes,   setMessageBytes]   = useState<`0x${string}` | undefined>(undefined);
+  const [attestation,    setAttestation]    = useState<`0x${string}` | undefined>(undefined);
+  const [pollCount,      setPollCount]      = useState(0);
+  const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
-  // Check current USDC allowance for the bridge on this source chain
+  // ─── Reads ─────────────────────────────────────────────────────────────────
+
+  const usdcAddress          = srcChain?.usdcAddress          ?? ("0x0000000000000000000000000000000000000000" as Address);
+  const tokenMessengerAddress = srcChain?.tokenMessengerAddress ?? ("0x0000000000000000000000000000000000000000" as Address);
+
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address:      usdcAddress,
     abi:          ERC20_ABI,
     functionName: "allowance",
-    args:         [address ?? "0x0000000000000000000000000000000000000000", bridgeAddress],
+    args:         [address ?? "0x0000000000000000000000000000000000000000", tokenMessengerAddress],
     query:        { enabled: !!address && bridgeConfigured },
   });
 
-  // Quote LZ fee — called on demand via `quote()`
-  const [quoteAmount, setQuoteAmount] = useState<bigint>(0n);
-  const { data: quoteData, isLoading: isQuoting, refetch: refetchQuote } = useReadContract({
-    address:      bridgeAddress,
-    abi:          BRIDGE_ABI,
-    functionName: "quoteCrossChainAction",
-    args:         [DST_EID, FUNDRAISER_ID, ACTION_DONATE, quoteAmount],
-    query:        { enabled: bridgeConfigured && quoteAmount > 0n },
-  });
+  // ─── Writes ────────────────────────────────────────────────────────────────
 
-  // ─── Writes ─────────────────────────────────────────────────────────────────
+  const {
+    writeContract,
+    data:     writeTxHash,
+    isPending: isWritePending,
+    error:    writeError,
+    reset:    resetWrite,
+  } = useWriteContract();
 
-  const { writeContract, data: writeTxHash, isPending: isWritePending, error: writeError, reset: resetWrite } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess: isTxSuccess, data: txReceipt } =
+    useWaitForTransactionReceipt({ hash: writeTxHash });
 
-  const { isLoading: isConfirming, isSuccess: isTxSuccess } = useWaitForTransactionReceipt({
-    hash: writeTxHash,
-  });
-
-  // ─── Effects ────────────────────────────────────────────────────────────────
-
-  // Update LZ fee when quote returns
-  useEffect(() => {
-    if (quoteData && quoteAmount > 0n) {
-      const fee = (quoteData as [bigint, bigint])[0];
-      setLzFee(fee);
-      if (step === "quoting") setStep("idle");
-    }
-  }, [quoteData, quoteAmount, step]);
-
-  // Handle tx confirmation
-  useEffect(() => {
-    if (writeTxHash) {
-      setTxHash(writeTxHash);
-      if (phase === "approve") {
-        setStep("confirming");
-      } else {
-        setStep("confirming");
-      }
-    }
-  }, [writeTxHash, phase]);
+  // ─── Effects: track write lifecycle ────────────────────────────────────────
 
   useEffect(() => {
-    if (isTxSuccess && writeTxHash) {
-      if (phase === "approve") {
-        // Approval done — now send the actual bridge tx
-        refetchAllowance().then(() => {
-          _sendBridge(pendingAmount);
-        });
-      } else {
-        // Bridge tx done
-        setStep("success");
-      }
+    if (writeTxHash) setTxHash(writeTxHash);
+  }, [writeTxHash]);
+
+  useEffect(() => {
+    if (!isTxSuccess || !txReceipt) return;
+
+    if (phase === "approve") {
+      // Approval confirmed → execute burn
+      refetchAllowance().then(() => {
+        _sendBurn(pendingAmount);
+      });
+    } else if (phase === "burn") {
+      // Burn confirmed → extract message from logs and start polling
+      _extractMessageAndPoll(txReceipt.logs);
     }
-  }, [isTxSuccess, writeTxHash]);
+  }, [isTxSuccess, txReceipt]);
 
   useEffect(() => {
     if (writeError) {
-      const msg = writeError.message?.split("\n")[0] ?? "Transaction failed";
-      setErrorMsg(msg);
+      setErrorMsg(writeError.message?.split("\n")[0] ?? "Transaction failed");
       setStep("error");
     }
   }, [writeError]);
 
-  // ─── Internal helpers ───────────────────────────────────────────────────────
+  // Cleanup poll interval on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
-  const _sendBridge = useCallback((amount: bigint) => {
-    if (!bridgeConfigured || lzFee === 0n) return;
-    setPhase("send");
-    setStep("sending");
-    resetWrite();
+  // ─── Internal: extract MessageSent bytes from burn tx logs ─────────────────
 
-    writeContract({
-      address:      bridgeAddress,
-      abi:          BRIDGE_ABI,
-      functionName: "sendCrossChainAction",
-      args:         [DST_EID, FUNDRAISER_ID, ACTION_DONATE, usdcAddress, amount],
-      value:        lzFee,
-    });
-  }, [bridgeAddress, bridgeConfigured, lzFee, usdcAddress, writeContract, resetWrite]);
+  const _extractMessageAndPoll = useCallback((logs: readonly Log[]) => {
+    // The MessageTransmitter on the source chain emits MessageSent(bytes message)
+    // We find it by matching the event signature topic
+    const MESSAGE_SENT_TOPIC = "0x8c5261668696ce22758910d05bab8f186d6eb247ceac2af2e82c7dc17669b036" as `0x${string}`;
 
-  const _sendBridgeNative = useCallback((amount: bigint) => {
-    if (!bridgeConfigured || lzFee === 0n) return;
-    setPhase("send");
-    setStep("sending");
-    resetWrite();
+    let rawMessage: `0x${string}` | undefined;
+    for (const log of logs) {
+      if (log.topics[0] === MESSAGE_SENT_TOPIC && log.data) {
+        // ABI-decode the bytes argument from the log data
+        // The log data is: offset (32 bytes) + length (32 bytes) + message bytes
+        const dataHex = log.data.slice(2); // strip 0x
+        const lengthOffset = 64; // skip offset word (32 bytes = 64 hex chars)
+        const length = parseInt(dataHex.slice(lengthOffset, lengthOffset + 64), 16);
+        const msgHex = dataHex.slice(lengthOffset + 64, lengthOffset + 64 + length * 2);
+        rawMessage = ("0x" + msgHex) as `0x${string}`;
+        break;
+      }
+    }
 
-    writeContract({
-      address:      bridgeAddress,
-      abi:          BRIDGE_ABI,
-      functionName: "sendCrossChainActionNative",
-      args:         [DST_EID, FUNDRAISER_ID, ACTION_DONATE, amount],
-      value:        amount + lzFee,  // donation ETH + LZ fee in one msg.value
-    });
-  }, [bridgeAddress, bridgeConfigured, lzFee, writeContract, resetWrite]);
-
-  // ─── Public API ─────────────────────────────────────────────────────────────
-
-  const quote = useCallback((amountUsdc: bigint) => {
-    if (amountUsdc === 0n || !bridgeConfigured) return;
-    setQuoteAmount(amountUsdc);
-    setStep("quoting");
-    refetchQuote();
-  }, [bridgeConfigured, refetchQuote]);
-
-  const executeNative = useCallback((amountWei: bigint) => {
-    if (!address || amountWei === 0n || !bridgeConfigured) return;
-    if (lzFee === 0n) { setErrorMsg("Please wait for fee quote to load."); return; }
-    setPendingAmount(amountWei);
-    setErrorMsg("");
-    _sendBridgeNative(amountWei);
-  }, [address, bridgeConfigured, lzFee, _sendBridgeNative]);
-
-  const execute = useCallback((amountUsdc: bigint) => {
-    if (!address || amountUsdc === 0n || !bridgeConfigured) return;
-    if (lzFee === 0n) {
-      setErrorMsg("Please wait for fee quote to load.");
+    if (!rawMessage) {
+      setErrorMsg("Could not find MessageSent event in burn transaction. Try again.");
+      setStep("error");
       return;
     }
 
+    setMessageBytes(rawMessage);
+    setStep("waiting_attestation");
+    setPollCount(0);
+    _startAttestationPolling(rawMessage);
+  }, []);
+
+  // ─── Internal: poll Circle attestation API ─────────────────────────────────
+
+  const _startAttestationPolling = useCallback((rawMessage: `0x${string}`) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+
+    const messageHash = keccak256(rawMessage);
+
+    const poll = async () => {
+      setPollCount((c) => {
+        if (c >= ATTESTATION_MAX_POLLS) {
+          clearInterval(pollRef.current);
+          setErrorMsg("Attestation timed out after 15 minutes. Please try completing the mint manually.");
+          setStep("error");
+          return c;
+        }
+        return c + 1;
+      });
+
+      try {
+        const res = await fetch(attestationUrl(messageHash));
+        if (!res.ok) return; // circle returns 404 while pending — just keep polling
+
+        const json = await res.json();
+        if (json?.status === "complete" && json?.attestation) {
+          clearInterval(pollRef.current);
+          setAttestation(json.attestation as `0x${string}`);
+          setStep("switch_to_base");
+        }
+      } catch {
+        // Network error — continue polling
+      }
+    };
+
+    pollRef.current = setInterval(poll, ATTESTATION_POLL_INTERVAL_MS);
+    poll(); // immediate first attempt
+  }, []);
+
+  // ─── Internal: send burn tx ─────────────────────────────────────────────────
+
+  const _sendBurn = useCallback((amount: bigint) => {
+    if (!address || !bridgeConfigured) return;
+    setPhase("burn");
+    setStep("burning");
+    resetWrite();
+
+    writeContract({
+      address:      tokenMessengerAddress,
+      abi:          TOKEN_MESSENGER_ABI,
+      functionName: "depositForBurn",
+      args: [
+        amount,
+        CCTP_BASE_DOMAIN,                  // destinationDomain = Base
+        // mintRecipient must be bytes32 (padded)
+        ("0x000000000000000000000000" + CCTP_BASE_RECEIVER_ADDRESS.slice(2)) as `0x${string}`,
+        usdcAddress,
+      ],
+    });
+  }, [address, bridgeConfigured, tokenMessengerAddress, usdcAddress, writeContract, resetWrite]);
+
+  // ─── Public API ────────────────────────────────────────────────────────────
+
+  /** Phase 1: approve (if needed) then burn USDC on source chain */
+  const execute = useCallback((amountUsdc: bigint) => {
+    if (!address || amountUsdc === 0n || !bridgeConfigured) return;
     setPendingAmount(amountUsdc);
     setErrorMsg("");
+    setAttestation(undefined);
+    setMessageBytes(undefined);
 
     const currentAllowance = (allowance as bigint | undefined) ?? 0n;
     if (currentAllowance >= amountUsdc) {
-      // Allowance sufficient — go straight to bridge
-      _sendBridge(amountUsdc);
+      _sendBurn(amountUsdc);
     } else {
-      // Need to approve first
       setPhase("approve");
       setStep("approving");
       resetWrite();
@@ -232,41 +291,64 @@ export function useCrossChainDonate(): CrossChainDonateState {
         address:      usdcAddress,
         abi:          ERC20_ABI,
         functionName: "approve",
-        args:         [bridgeAddress, amountUsdc],
+        args:         [tokenMessengerAddress, amountUsdc],
       });
     }
-  }, [address, allowance, bridgeAddress, bridgeConfigured, lzFee, usdcAddress, writeContract, resetWrite, _sendBridge]);
+  }, [address, allowance, bridgeConfigured, tokenMessengerAddress, usdcAddress, writeContract, resetWrite, _sendBurn]);
+
+  /** Phase 3: after user switches to Base, complete the CCTP mint */
+  const completeMint = useCallback(() => {
+    if (!address || !messageBytes || !attestation) {
+      setErrorMsg("Missing attestation data. Please wait for the attestation to complete.");
+      return;
+    }
+
+    // Switch to Base if not already there
+    if (chain?.id !== base.id) {
+      switchChain({ chainId: base.id });
+      return;
+    }
+
+    setStep("minting");
+    resetWrite();
+
+    writeContract({
+      address:      CCTP_BASE_RECEIVER_ADDRESS,
+      abi:          CCTP_RECEIVER_ABI,
+      functionName: "completeTransfer",
+      args:         [messageBytes, attestation, address],
+    });
+  }, [address, attestation, chain, messageBytes, switchChain, writeContract, resetWrite]);
 
   const reset = useCallback(() => {
+    if (pollRef.current) clearInterval(pollRef.current);
     setStep("idle");
-    setLzFee(0n);
     setTxHash(undefined);
     setErrorMsg("");
     setPendingAmount(0n);
-    setQuoteAmount(0n);
     setPhase("approve");
+    setMessageBytes(undefined);
+    setAttestation(undefined);
+    setPollCount(0);
     resetWrite();
   }, [resetWrite]);
 
-  // ─── Derived display values ──────────────────────────────────────────────────
+  // ─── Derived values ────────────────────────────────────────────────────────
 
-  const lzFeeEth = lzFee > 0n ? formatUnits(lzFee, 18) : "—";
-  const nativeCurrency = srcChain?.nativeCurrency ?? "ETH";
+  const attestationProgress = Math.min(100, Math.round((pollCount / ATTESTATION_MAX_POLLS) * 100));
 
   return {
     step,
-    lzFee,
-    lzFeeEth,
     txHash,
     errorMsg,
-    isProcessing: step === "approving" || step === "sending" || step === "confirming",
-    quote,
+    isProcessing: ["approving", "burning", "minting"].includes(step),
+    attestationProgress,
     execute,
-    executeNative,
+    completeMint,
     reset,
-    sourceChainName:   srcChain?.name  ?? "Unknown",
-    sourceChainIcon:   srcChain?.icon  ?? "🔗",
-    nativeCurrency,
+    sourceChainName:  srcChain?.name ?? "Unknown",
+    sourceChainIcon:  srcChain?.icon ?? "🔗",
+    nativeCurrency:   srcChain?.nativeCurrency ?? "ETH",
     bridgeConfigured,
   };
 }
