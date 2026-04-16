@@ -30,9 +30,35 @@ import {
   useSwitchChain,
   usePublicClient,
 } from "wagmi";
-import { keccak256, parseUnits, formatUnits } from "viem";
+import { keccak256 } from "viem";
 import type { Address, Log } from "viem";
 import { base } from "wagmi/chains";
+
+// ─── localStorage persistence ─────────────────────────────────────────────────
+// Saves pending transfer so a page refresh after the burn (but before the mint)
+// doesn't strand the user's USDC.
+
+interface PersistedTransfer {
+  messageBytes: `0x${string}`;
+  attestation:  `0x${string}` | null;   // null while still polling
+  txHash:       `0x${string}`;
+}
+
+function storageKey(address: string) {
+  return `cctp_pending_${address.toLowerCase()}`;
+}
+function saveTransfer(address: string, data: PersistedTransfer) {
+  try { localStorage.setItem(storageKey(address), JSON.stringify(data)); } catch {}
+}
+function loadTransfer(address: string): PersistedTransfer | null {
+  try {
+    const raw = localStorage.getItem(storageKey(address));
+    return raw ? (JSON.parse(raw) as PersistedTransfer) : null;
+  } catch { return null; }
+}
+function clearTransfer(address: string) {
+  try { localStorage.removeItem(storageKey(address)); } catch {}
+}
 import {
   ERC20_ABI,
   getSourceChain,
@@ -110,13 +136,35 @@ export function useCrossChainDonate(): CrossChainDonateState {
   const [txHash,       setTxHash]       = useState<`0x${string}` | undefined>(undefined);
   const [errorMsg,     setErrorMsg]     = useState("");
   const [pendingAmount, setPendingAmount] = useState<bigint>(0n);
-  const [phase,        setPhase]        = useState<"approve" | "burn">("approve");
+  const [phase,        setPhase]        = useState<"approve" | "burn" | "mint">("approve");
 
-  // Attestation state — persisted across chain switch
+  // Attestation state — persisted to localStorage so page refresh can resume
   const [messageBytes,   setMessageBytes]   = useState<`0x${string}` | undefined>(undefined);
   const [attestation,    setAttestation]    = useState<`0x${string}` | undefined>(undefined);
   const [pollCount,      setPollCount]      = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+
+  // ─── On mount: restore any pending transfer for this wallet ────────────────
+  useEffect(() => {
+    if (!address) return;
+    const saved = loadTransfer(address);
+    if (!saved) return;
+
+    setTxHash(saved.txHash);
+    setMessageBytes(saved.messageBytes);
+
+    if (saved.attestation) {
+      // Attestation already complete — jump straight to "switch to Base"
+      setAttestation(saved.attestation);
+      setStep("switch_to_base");
+    } else {
+      // Attestation still pending — resume polling
+      setStep("waiting_attestation");
+      setPollCount(0);
+      _startAttestationPolling(saved.messageBytes);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address]);
 
   // ─── Reads ─────────────────────────────────────────────────────────────────
 
@@ -160,7 +208,11 @@ export function useCrossChainDonate(): CrossChainDonateState {
       });
     } else if (phase === "burn") {
       // Burn confirmed → extract message from logs and start polling
-      _extractMessageAndPoll(txReceipt.logs);
+      _extractMessageAndPoll(txReceipt.logs, txReceipt.transactionHash);
+    } else if (phase === "mint") {
+      // Mint confirmed → clear persisted state and mark success
+      if (address) clearTransfer(address);
+      setStep("success");
     }
   }, [isTxSuccess, txReceipt]);
 
@@ -180,7 +232,7 @@ export function useCrossChainDonate(): CrossChainDonateState {
 
   // ─── Internal: extract MessageSent bytes from burn tx logs ─────────────────
 
-  const _extractMessageAndPoll = useCallback((logs: readonly Log[]) => {
+  const _extractMessageAndPoll = useCallback((logs: readonly Log[], burnTxHash?: `0x${string}`) => {
     // The MessageTransmitter on the source chain emits MessageSent(bytes message)
     // We find it by matching the event signature topic
     const MESSAGE_SENT_TOPIC = "0x8c5261668696ce22758910d05bab8f186d6eb247ceac2af2e82c7dc17669b036" as `0x${string}`;
@@ -208,8 +260,12 @@ export function useCrossChainDonate(): CrossChainDonateState {
     setMessageBytes(rawMessage);
     setStep("waiting_attestation");
     setPollCount(0);
+    // Persist immediately — if the page is closed now the burn is irrecoverable
+    if (address) {
+      saveTransfer(address, { messageBytes: rawMessage, attestation: null, txHash: burnTxHash ?? "0x" });
+    }
     _startAttestationPolling(rawMessage);
-  }, []);
+  }, [address]);
 
   // ─── Internal: poll Circle attestation API ─────────────────────────────────
 
@@ -236,8 +292,14 @@ export function useCrossChainDonate(): CrossChainDonateState {
         const json = await res.json();
         if (json?.status === "complete" && json?.attestation) {
           clearInterval(pollRef.current);
-          setAttestation(json.attestation as `0x${string}`);
+          const att = json.attestation as `0x${string}`;
+          setAttestation(att);
           setStep("switch_to_base");
+          // Update persisted record with the attestation so refresh can skip polling
+          if (address) {
+            const saved = loadTransfer(address);
+            if (saved) saveTransfer(address, { ...saved, attestation: att });
+          }
         }
       } catch {
         // Network error — continue polling
@@ -309,6 +371,7 @@ export function useCrossChainDonate(): CrossChainDonateState {
       return;
     }
 
+    setPhase("mint");
     setStep("minting");
     resetWrite();
 
@@ -322,6 +385,7 @@ export function useCrossChainDonate(): CrossChainDonateState {
 
   const reset = useCallback(() => {
     if (pollRef.current) clearInterval(pollRef.current);
+    if (address) clearTransfer(address);
     setStep("idle");
     setTxHash(undefined);
     setErrorMsg("");
@@ -331,7 +395,7 @@ export function useCrossChainDonate(): CrossChainDonateState {
     setAttestation(undefined);
     setPollCount(0);
     resetWrite();
-  }, [resetWrite]);
+  }, [address, resetWrite]);
 
   // ─── Derived values ────────────────────────────────────────────────────────
 
