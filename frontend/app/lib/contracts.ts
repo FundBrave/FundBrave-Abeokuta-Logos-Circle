@@ -15,7 +15,8 @@ import { base, baseSepolia } from "wagmi/chains";
 
 /** Validate that a resolved env var value is present. */
 function requireEnv(name: string, val: string | undefined, fallback?: string): string {
-  const resolved = val || fallback;
+  // Trim whitespace/newlines — Vercel's "env add" command can introduce a trailing \n.
+  const resolved = (val?.trim()) || fallback?.trim();
   if (!resolved) {
     throw new Error(
       `Missing required environment variable: ${name}. ` +
