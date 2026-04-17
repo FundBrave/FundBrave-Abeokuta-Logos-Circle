@@ -14,6 +14,7 @@ import {
   CONTRACT_ADDRESSES,
   TARGET_CHAIN_ID,
   formatUSDC,
+  formatUSDCSmart,
   friendlyError,
 } from "../lib/contracts";
 
@@ -457,12 +458,14 @@ export function useStaking() {
     escapedCauseYield,
     escapedCauseTimestamp,
     canRescue,
-    escapedCauseFormatted: formatUSDC(escapedCauseYield),
+    // Use smart formatter: shows 6 decimal places for sub-cent amounts
+    escapedCauseFormatted: formatUSDCSmart(escapedCauseYield),
 
-    // Formatted
+    // Formatted — use smart formatter for yield so tiny amounts show as
+    // "0.000250" instead of "0.00" (prevents "you earned nothing" confusion)
     stakerPrincipalFormatted: formatUSDC(stakerPrincipal),
-    pendingYieldFormatted:    formatUSDC(pendingYield),
-    pendingCauseFormatted:    formatUSDC(pendingCause),
+    pendingYieldFormatted:    formatUSDCSmart(pendingYield),
+    pendingCauseFormatted:    formatUSDCSmart(pendingCause),
     usdcBalanceFormatted:     formatUSDC(usdcBalance),
 
     // Per-staker split

@@ -604,6 +604,23 @@ export function formatUSDC(amount: bigint): string {
   return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/**
+ * Like formatUSDC but shows up to 6 decimal places for amounts below $0.01.
+ * Prevents tiny yield values from rounding to "$0.00".
+ * Example: 250 (0.000250 USDC) → "0.000250" instead of "0.00"
+ */
+export function formatUSDCSmart(amount: bigint): string {
+  if (amount === 0n) return "0.00";
+  const num = Number(amount) / 1e6;
+  if (num < 0.01) {
+    // Show up to 6 decimal places, strip trailing zeros but keep at least 2
+    const s = num.toFixed(6);
+    const trimmed = s.replace(/0+$/, "");
+    return trimmed.endsWith(".") ? trimmed + "00" : trimmed.length < s.indexOf(".") + 3 ? trimmed.padEnd(s.indexOf(".") + 3, "0") : trimmed;
+  }
+  return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 export function shortenAddress(address: string): string {
   if (!address || address.length < 10) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
