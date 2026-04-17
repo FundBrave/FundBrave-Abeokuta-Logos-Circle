@@ -4,6 +4,9 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useScrollReveal } from "../../hooks/useScrollReveal";
 
+/** Campaign minimum per-donation: 1 USDC in 6-decimal units. */
+const MIN_CAMPAIGN_DONATION = 1_000_000n;
+
 interface StakePositionCardProps {
   stakerPrincipal: bigint;
   stakerPrincipalFormatted: string;
@@ -15,6 +18,14 @@ interface StakePositionCardProps {
   step: string;
   onClaimYield: () => void;
   onCompoundYield: () => void;
+  /** Which action was last dispatched — used to show targeted success feedback. */
+  lastAction?: string | null;
+  /** Human-readable label for the completed action. */
+  successLabel?: string;
+  /** SC-C1: Cause yield that failed to credit (below MIN_DONATION threshold). */
+  escapedCauseYield?: bigint;
+  escapedCauseFormatted?: string;
+  canRescue?: boolean;
 }
 
 export function StakePositionCard({
@@ -28,11 +39,21 @@ export function StakePositionCard({
   step,
   onClaimYield,
   onCompoundYield,
+  lastAction,
+  successLabel,
+  escapedCauseYield = 0n,
+  escapedCauseFormatted = "0.000000",
+  canRescue = false,
 }: StakePositionCardProps) {
   const hasYield    = pendingYield > 0n || pendingCause > 0n;
   const isStaked    = stakerPrincipal > 0n;
   const [showTooltip, setShowTooltip] = useState(false);
   const ref = useScrollReveal<HTMLElement>({ y: 30, duration: 0.6 });
+
+  // Show success flash when claim or compound just completed
+  const isActionSuccess = step === "success" && (lastAction === "claim" || lastAction === "compound");
+  // SC-C1: escrowed yield below the 1 USDC campaign minimum — cannot be retried yet
+  const escrowedBelowMin = escapedCauseYield > 0n && escapedCauseYield < MIN_CAMPAIGN_DONATION;
 
   return (
     <section ref={ref} className="relative rounded-2xl p-[1px] bg-gradient-to-r from-primary-container via-secondary-container to-primary-container shadow-2xl">
@@ -82,6 +103,43 @@ export function StakePositionCard({
             </div>
           </div>
         </div>
+
+        {/* Success flash for claim / compound */}
+        {isActionSuccess && (
+          <div className="mb-4 px-4 py-3 rounded-xl bg-primary/10 border border-primary/20 flex items-center gap-3">
+            <span className="text-primary">
+              <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
+                check_circle
+              </span>
+            </span>
+            <span className="text-on-surface text-sm font-semibold">{successLabel}</span>
+          </div>
+        )}
+
+        {/* SC-C1: Escrowed cause yield notice */}
+        {escapedCauseYield > 0n && (
+          <div className="mb-4 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-3">
+            <span className="text-amber-400 mt-0.5">
+              <span className="material-symbols-outlined text-sm">info</span>
+            </span>
+            <div>
+              <p className="text-amber-300 text-xs font-semibold">
+                ${escapedCauseFormatted} cause yield accumulating
+              </p>
+              {escrowedBelowMin ? (
+                <p className="text-on-surface-variant text-[11px] mt-0.5">
+                  This amount is below the $1.00 campaign minimum. It will be credited
+                  automatically once it reaches $1.00 through future yield accrual.
+                  {canRescue && " You can also rescue it back to your wallet now."}
+                </p>
+              ) : (
+                <p className="text-on-surface-variant text-[11px] mt-0.5">
+                  Ready to send to the campaign. Use "Retry Cause Credit" to submit it.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Claim / Compound footer */}
         <div className="flex items-center justify-between pt-6 border-t border-outline-variant/20">

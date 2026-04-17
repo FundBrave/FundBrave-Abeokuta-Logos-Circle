@@ -26,6 +26,10 @@ interface StakeTerminalProps {
     causeSharePct: string;
     causeShareBps: bigint;
     reset: () => void;
+    /** Which action was last dispatched. Used to scope the success banner. */
+    lastAction: string | null;
+    /** Human-readable success label for the last action. */
+    successLabel: string;
   };
 }
 
@@ -41,7 +45,11 @@ export function StakeTerminal({
   onMaxUnstake,
   staking,
 }: StakeTerminalProps) {
-  const isSuccess = staking.step === "success";
+  // Only show the in-page success banner for stake/unstake. Claim and compound
+  // have their own success feedback in StakePositionCard.
+  const isSuccess =
+    staking.step === "success" &&
+    (staking.lastAction === "stake" || staking.lastAction === "unstake");
   const exceedsBalance =
     tab === "stake" && parsedAmount > 0n && parsedAmount > staking.usdcBalance;
   const ref = useScrollReveal<HTMLDivElement>({ y: 35, duration: 0.7 });
@@ -216,14 +224,12 @@ export function StakeTerminal({
               </span>
             </div>
             <h2 className="text-xl font-headline font-bold text-on-surface">
-              {tab === "stake"
-                ? "Staking Successful"
-                : "Unstaking Successful"}
+              {staking.successLabel}
             </h2>
             <p className="text-on-surface-variant text-sm">
-              {tab === "stake"
+              {staking.lastAction === "stake"
                 ? `You've staked ${amount} USDC and are now powering change.`
-                : `You've unstaked ${amount} USDC.`}
+                : `You've unstaked ${amount} USDC successfully.`}
             </p>
             {staking.txHash && (
               <a

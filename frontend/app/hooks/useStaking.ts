@@ -36,6 +36,17 @@ function bpsToPercent(bps: bigint | number): string {
   return `${Number(bps) / 100}%`;
 }
 
+/** Maps a completed action key → human-readable success label for the UI. */
+const ACTION_LABELS: Record<string, string> = {
+  stake:       "Staked successfully!",
+  unstake:     "Unstaked successfully!",
+  claim:       "Yield claimed!",
+  compound:    "Yield compounded!",
+  settingsplit: "Yield split saved!",
+  retry:       "Cause yield sent to campaign!",
+  rescue:      "Yield rescued to your wallet!",
+};
+
 export function useStaking() {
   const { address } = useAccount();
   const [step, setStep] = useState<StakingStep>("idle");
@@ -44,11 +55,13 @@ export function useStaking() {
     type: "stake" | "unstake" | "claim";
     amount?: bigint;
   } | null>(null);
+  /** Which action was last dispatched ("stake" | "unstake" | "claim" | etc.) */
+  const [lastAction, setLastAction] = useState<string | null>(null);
   // Tracks whether we've already auto-proceeded after an approval so we don't double-fire
   const approvalProcessed = useRef(false);
   // Single toast ID — loading toast is updated in-place through the flow
   const toastId    = useRef<string | number | undefined>(undefined);
-  // Label shown on success (set when each action starts)
+  // Label shown in toast on success (set when each action starts)
   const successMsg = useRef<string>("Done!");
 
   const {
@@ -158,6 +171,7 @@ export function useStaking() {
     setStep("idle");
     setErrorMsg(null);
     setPendingAction(null);
+    setLastAction(null);
     resetWrite();
   };
 
@@ -165,6 +179,7 @@ export function useStaking() {
     if (!address) { setErrorMsg("Connect your wallet first"); return; }
     setErrorMsg(null);
     approvalProcessed.current = false;
+    setLastAction("stake");
     setPendingAction({ type: "stake", amount });
 
     if (!usdcAllowance || usdcAllowance < amount) {
@@ -196,6 +211,7 @@ export function useStaking() {
   const unstakeUSDC = (amount: bigint) => {
     if (!address) { setErrorMsg("Connect your wallet first"); return; }
     setErrorMsg(null);
+    setLastAction("unstake");
     setStep("unstaking");
     writeContract({
       address:      CONTRACT_ADDRESSES.staking,
@@ -209,6 +225,7 @@ export function useStaking() {
   const claimYield = () => {
     if (!address) { setErrorMsg("Connect your wallet first"); return; }
     setErrorMsg(null);
+    setLastAction("claim");
     setStep("claiming");
     writeContract({
       address:      CONTRACT_ADDRESSES.staking,
@@ -232,6 +249,7 @@ export function useStaking() {
   const compoundYield = () => {
     if (!address) { setErrorMsg("Connect your wallet first"); return; }
     setErrorMsg(null);
+    setLastAction("compound");
     setStep("compounding");
     writeContract({
       address:      CONTRACT_ADDRESSES.staking,
@@ -245,6 +263,7 @@ export function useStaking() {
   const retryCauseCredit = () => {
     if (!address) { setErrorMsg("Connect your wallet first"); return; }
     setErrorMsg(null);
+    setLastAction("retry");
     setStep("retrying");
     writeContract({
       address:      CONTRACT_ADDRESSES.staking,
@@ -259,6 +278,7 @@ export function useStaking() {
   const rescueEscrowedCause = () => {
     if (!address) { setErrorMsg("Connect your wallet first"); return; }
     setErrorMsg(null);
+    setLastAction("rescue");
     setStep("rescuing");
     writeContract({
       address:      CONTRACT_ADDRESSES.staking,
@@ -279,6 +299,7 @@ export function useStaking() {
       return;
     }
     setErrorMsg(null);
+    setLastAction("settingsplit");
     setStep("settingsplit");
     writeContract({
       address:      CONTRACT_ADDRESSES.staking,
@@ -402,6 +423,9 @@ export function useStaking() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuccess, step, pendingAction]);
 
+  /** Human-readable label for the last completed action (for UI success banners). */
+  const successLabel = lastAction ? (ACTION_LABELS[lastAction] ?? "Done!") : "Done!";
+
   return {
     stakeUSDC,
     unstakeUSDC,
@@ -419,6 +443,8 @@ export function useStaking() {
     isSuccess,
     errorMsg,
     isProcessing: isWritePending || isConfirming,
+    successLabel,
+    lastAction,
 
     // Position
     stakerPrincipal,

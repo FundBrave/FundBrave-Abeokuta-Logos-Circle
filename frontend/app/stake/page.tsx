@@ -147,6 +147,11 @@ export default function StakePage() {
           step={staking.step}
           onClaimYield={staking.claimYield}
           onCompoundYield={staking.compoundYield}
+          lastAction={staking.lastAction}
+          successLabel={staking.successLabel}
+          escapedCauseYield={staking.escapedCauseYield}
+          escapedCauseFormatted={staking.escapedCauseFormatted}
+          canRescue={staking.canRescue}
         />
 
         <StakeSplitConfigurator
