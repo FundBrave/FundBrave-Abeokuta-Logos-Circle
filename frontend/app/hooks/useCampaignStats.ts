@@ -38,11 +38,11 @@ export function useCampaignStats() {
         chainId:      TARGET_CHAIN_ID,
       },
     ],
-    // FE-M4: Refetch every 30 s to show live progress; staleTime prevents
-    // redundant re-fetches when multiple components use this hook simultaneously.
+    // Refetch every 60 s; staleTime=45s means multiple components share one
+    // in-flight request rather than each firing their own RPC call.
     query: {
-      refetchInterval: 30_000,
-      staleTime:       15_000,
+      refetchInterval: 60_000,
+      staleTime:       45_000,
     },
   });
 

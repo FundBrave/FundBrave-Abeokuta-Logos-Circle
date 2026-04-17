@@ -341,7 +341,7 @@ export function useStaking() {
 
   useEffect(() => {
     if (writeError && step !== "error") {
-      console.error("[useStaking] writeError:", writeError);
+      if (process.env.NODE_ENV === "development") console.error("[useStaking] writeError:", writeError);
       setStep("error");
       setErrorMsg(friendlyError(writeError));
     }

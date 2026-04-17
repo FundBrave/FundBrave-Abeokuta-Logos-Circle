@@ -41,9 +41,11 @@ function useCrossChainDonations(): DonationRecord[] {
 
     async function fetch() {
       try {
-        // Look back ~500k blocks (~11 days on Base) — covers the full campaign window.
+        // Look back ~3 days on Base (~2s/block → 129,600 blocks).
+        // Smaller range avoids RPC timeouts; cross-chain donations within
+        // the display window will still appear.
         const latestBlock = await client.getBlockNumber();
-        const fromBlock   = latestBlock > 500_000n ? latestBlock - 500_000n : 0n;
+        const fromBlock   = latestBlock > 129_600n ? latestBlock - 129_600n : 0n;
 
         const donatedEvent = CAMPAIGN_ABI.find(
           (x): x is typeof x & { type: "event" } => x.type === "event" && x.name === "Donated"
@@ -64,12 +66,17 @@ function useCrossChainDonations(): DonationRecord[] {
 
         if (xchain.length === 0 || cancelled) return;
 
-        // Batch-fetch block timestamps for every unique block number.
+        // Batch-fetch block timestamps in chunks of 10 to avoid overwhelming the RPC.
         const uniqueBlocks = [...new Set(xchain.map((l: any) => l.blockNumber as bigint))];
-        const blockData    = await Promise.all(
-          uniqueBlocks.map((n) => client.getBlock({ blockNumber: n }))
-        );
-        const tsMap = new Map(blockData.map((b) => [b.number.toString(), b.timestamp]));
+        const CHUNK = 10;
+        const blockData: Awaited<ReturnType<typeof client.getBlock>>[] = [];
+        for (let i = 0; i < uniqueBlocks.length; i += CHUNK) {
+          const batch = await Promise.all(
+            uniqueBlocks.slice(i, i + CHUNK).map((n) => client.getBlock({ blockNumber: n }))
+          );
+          blockData.push(...batch);
+        }
+        const tsMap = new Map(blockData.map((b) => [b.number?.toString() ?? "", b.timestamp]));
 
         const synthesised: DonationRecord[] = xchain.map((l: any) => ({
           donor:       l.args.donor       as string,
@@ -86,7 +93,7 @@ function useCrossChainDonations(): DonationRecord[] {
     }
 
     fetch();
-    const timer = setInterval(fetch, 30_000);
+    const timer = setInterval(fetch, 60_000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [publicClient]);
 
@@ -100,8 +107,8 @@ export function RecentDonations() {
     functionName: "getRecentDonations",
     args:         [0n, 10n],
     chainId:      TARGET_CHAIN_ID,
-    // FE-M3: Poll every 30 s so new donations appear without a page refresh
-    query: { refetchInterval: 30_000 },
+    // Poll every 60 s — matches the cross-chain log interval to avoid RPC pressure.
+    query: { refetchInterval: 60_000 },
   });
 
   const directDonations  = (data as DonationRecord[] | undefined) ?? [];

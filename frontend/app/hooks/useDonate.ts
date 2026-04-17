@@ -298,7 +298,7 @@ export function useDonate() {
 
   useEffect(() => {
     if (writeError && step !== "error") {
-      console.error("[useDonate] write error:", writeError);
+      if (process.env.NODE_ENV === "development") console.error("[useDonate] write error:", writeError);
       setStep("error");
       setErrorMsg(friendlyError(writeError));
     }

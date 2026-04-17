@@ -245,6 +245,9 @@ export function useCrossChainDonate(): CrossChainDonateState {
         const dataHex = log.data.slice(2); // strip 0x
         const lengthOffset = 64; // skip offset word (32 bytes = 64 hex chars)
         const length = parseInt(dataHex.slice(lengthOffset, lengthOffset + 64), 16);
+        // Sanity-check: CCTP messages are at least 100 bytes; guard against
+        // malformed logs (truncated data, wrong topic, adversarial RPC response).
+        if (length < 100 || length * 2 > dataHex.length - (lengthOffset + 64)) break;
         const msgHex = dataHex.slice(lengthOffset + 64, lengthOffset + 64 + length * 2);
         rawMessage = ("0x" + msgHex) as `0x${string}`;
         break;
@@ -290,9 +293,13 @@ export function useCrossChainDonate(): CrossChainDonateState {
         if (!res.ok) return; // circle returns 404 while pending — just keep polling
 
         const json = await res.json();
+        if (typeof json !== "object" || json === null) return;
         if (json?.status === "complete" && json?.attestation) {
           clearInterval(pollRef.current);
-          const att = json.attestation as `0x${string}`;
+          // Validate attestation is a proper hex string before trusting it.
+          const raw = json.attestation;
+          if (typeof raw !== "string" || !/^0x[0-9a-fA-F]+$/.test(raw)) return;
+          const att = raw as `0x${string}`;
           setAttestation(att);
           setStep("switch_to_base");
           // Update persisted record with the attestation so refresh can skip polling

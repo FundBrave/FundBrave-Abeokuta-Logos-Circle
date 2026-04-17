@@ -60,6 +60,7 @@ export function middleware(request: NextRequest) {
       "https://arb1.arbitrum.io",       // Arbitrum default RPC
       "https://rpc.ankr.com",           // Ankr public RPCs (base_sepolia, etc.)
       "https://api.web3modal.org",      // RainbowKit/Reown remote config
+      "https://iris-api.circle.com",    // Circle CCTP attestation polling
     ].join(" "),
     "frame-src 'self' https://*.walletconnect.com https://*.walletconnect.org",
   ].join("; ");
@@ -76,6 +77,7 @@ export function middleware(request: NextRequest) {
   response.headers.set("X-Frame-Options", "DENY");
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  response.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
   response.headers.set("X-DNS-Prefetch-Control", "on");
   response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
 

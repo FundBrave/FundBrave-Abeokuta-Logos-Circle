@@ -279,7 +279,8 @@ export const MULTISIG_SIGNERS = [
   { name: "Community Rep",  address: process.env.NEXT_PUBLIC_SIGNER_3 || "0x0000000000000000000000000000000000000000" },
 ];
 
-export const REQUIRED_SIGS = parseInt(process.env.NEXT_PUBLIC_REQUIRED_SIGS || "2");
+const _reqSigs = parseInt(process.env.NEXT_PUBLIC_REQUIRED_SIGS || "2", 10);
+export const REQUIRED_SIGS = Number.isNaN(_reqSigs) ? 2 : _reqSigs;
 export const TOTAL_SIGS    = MULTISIG_SIGNERS.length;
 
 // ─── ABIs (minimal — only functions the frontend calls) ───────────────────────
