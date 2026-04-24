@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Providers } from "./providers";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ScrollToTop } from "./components/ScrollToTop";
+import { PrivacyBanner } from "./components/PrivacyBanner";
 import "material-symbols/outlined.css";
 import "./globals.css";
 
@@ -48,6 +49,7 @@ export default function RootLayout({
         <ErrorBoundary>
           <Providers>{children}</Providers>
         </ErrorBoundary>
+        <PrivacyBanner />
       </body>
     </html>
   );

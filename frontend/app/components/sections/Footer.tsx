@@ -10,6 +10,7 @@ const FOOTER_LINKS = [
   { label: "Donate", href: "/donate" },
   { label: "Transparency", href: "/dashboard" },
   { label: "Stake", href: "/stake" },
+  { label: "Privacy", href: "/privacy" },
 ] as const;
 
 export function Footer() {
