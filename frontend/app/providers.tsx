@@ -35,11 +35,22 @@ if (typeof window !== "undefined") {
 }
 
 // Explicit RPC transports — avoids the default public endpoints that get rate-limited.
+// eth.merkle.io (viem's ETH default) doesn't send CORS headers, so browser fetches are
+// blocked. Always route ETH mainnet through Alchemy when a key is present.
 const alchemyKey = process.env.NEXT_PUBLIC_ALCHEMY_KEY;
 const rpc = {
   base: alchemyKey
     ? `https://base-mainnet.g.alchemy.com/v2/${alchemyKey}`
     : "https://mainnet.base.org",
+  ethereum: alchemyKey
+    ? `https://eth-mainnet.g.alchemy.com/v2/${alchemyKey}`
+    : "https://cloudflare-eth.com",
+  arbitrum: alchemyKey
+    ? `https://arb-mainnet.g.alchemy.com/v2/${alchemyKey}`
+    : "https://arb1.arbitrum.io/rpc",
+  optimism: alchemyKey
+    ? `https://opt-mainnet.g.alchemy.com/v2/${alchemyKey}`
+    : "https://mainnet.optimism.io",
 };
 
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://abeokuta.fundbrave.com";
@@ -55,9 +66,9 @@ const config = getDefaultConfig({
   chains: [base, mainnet, arbitrum, optimism],
   transports: {
     [base.id]:      http(rpc.base),
-    [mainnet.id]:   http(),
-    [arbitrum.id]:  http(),
-    [optimism.id]:  http(),
+    [mainnet.id]:   http(rpc.ethereum),
+    [arbitrum.id]:  http(rpc.arbitrum),
+    [optimism.id]:  http(rpc.optimism),
   },
   ssr: false,
 });
