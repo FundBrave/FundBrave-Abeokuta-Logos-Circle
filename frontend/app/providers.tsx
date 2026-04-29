@@ -20,9 +20,13 @@ const rpc = {
     : "https://mainnet.base.org",
 };
 
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://abeokuta.fundbrave.com";
+
 const config = getDefaultConfig({
   appName: "Abeokuta Logos Circle — FundBrave",
   projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
+  appUrl,
+  appDescription: "Fund online education courses for women entrepreneurs in Abeokuta, Nigeria.",
   chains: [base, baseSepolia, mainnet, arbitrum, optimism],
   transports: {
     [base.id]:        http(rpc.base),
