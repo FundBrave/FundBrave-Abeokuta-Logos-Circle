@@ -41,11 +41,10 @@ function useCrossChainDonations(): DonationRecord[] {
 
     async function fetch() {
       try {
-        // Look back ~3 days on Base (~2s/block → 129,600 blocks).
-        // Smaller range avoids RPC timeouts; cross-chain donations within
-        // the display window will still appear.
+        // Look back ~67 min on Base (~2s/block → 2,000 blocks).
+        // Alchemy free tier caps eth_getLogs at 2,048 blocks per request.
         const latestBlock = await client.getBlockNumber();
-        const fromBlock   = latestBlock > 129_600n ? latestBlock - 129_600n : 0n;
+        const fromBlock   = latestBlock > 2_000n ? latestBlock - 2_000n : 0n;
 
         const donatedEvent = CAMPAIGN_ABI.find(
           (x): x is typeof x & { type: "event" } => x.type === "event" && x.name === "Donated"
