@@ -28,7 +28,6 @@ import {
   useWriteContract,
   useWaitForTransactionReceipt,
   useSwitchChain,
-  usePublicClient,
 } from "wagmi";
 import { keccak256 } from "viem";
 import type { Address, Log } from "viem";
@@ -124,7 +123,6 @@ const MESSAGE_TRANSMITTER_ABI = [
 export function useCrossChainDonate(): CrossChainDonateState {
   const { address, chain } = useAccount();
   const { switchChain }    = useSwitchChain();
-  const publicClient       = usePublicClient();
 
   const srcChain         = chain ? getSourceChain(chain.id) : undefined;
   const bridgeConfigured = !!srcChain?.tokenMessengerAddress &&
