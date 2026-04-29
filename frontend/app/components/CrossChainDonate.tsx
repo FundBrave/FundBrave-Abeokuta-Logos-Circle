@@ -48,14 +48,27 @@ function StepRow({ done, active, label }: { done: boolean; active: boolean; labe
 
 interface Props {
   onSuccess?: (txHash: `0x${string}` | undefined) => void;
+  /** Called when the burn confirms — parent keeps this component mounted across the chain switch */
+  onPendingTransfer?: () => void;
+  /** Called when the user cancels or resets — parent can unmount safely */
+  onReset?: () => void;
 }
 
 const PRESET_AMOUNTS_USDC = [10, 25, 50, 100, 250];
 
-export function CrossChainDonate({ onSuccess }: Props) {
+export function CrossChainDonate({ onSuccess, onPendingTransfer, onReset }: Props) {
   const xc = useCrossChainDonate();
   const { address, chain } = useAccount();
   const [amount, setAmount] = useState("");
+
+  // Tell parent when a transfer is in-flight so it keeps this component mounted
+  // across the mandatory Ethereum→Base chain switch in Phase 3.
+  useEffect(() => {
+    if (xc.step === "waiting_attestation" || xc.step === "switch_to_base") {
+      onPendingTransfer?.();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [xc.step]);
 
   // USDC balance on the current source chain
   const srcUsdcAddress = chain ? getSourceChain(chain.id)?.usdcAddress : undefined;
@@ -211,7 +224,7 @@ export function CrossChainDonate({ onSuccess }: Props) {
             </button>
 
             <button
-              onClick={() => xc.reset()}
+              onClick={() => { xc.reset(); onReset?.(); }}
               className="w-full text-xs text-white/30 hover:text-white/50 transition-colors"
             >
               Cancel and start over
@@ -381,7 +394,7 @@ export function CrossChainDonate({ onSuccess }: Props) {
           <div className="flex-1">
             <p className="text-red-400 text-sm">{xc.errorMsg}</p>
             <button
-              onClick={() => xc.reset()}
+              onClick={() => { xc.reset(); onReset?.(); }}
               className="text-red-400/60 text-xs mt-1 hover:text-red-400 transition-colors"
             >
               Try again

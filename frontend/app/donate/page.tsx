@@ -42,6 +42,16 @@ export default function DonatePage() {
   const [isApprovalStep, setIsApprovalStep] = useState(false);
   const [showHighValueWarning, setShowHighValueWarning] = useState(false);
 
+  // Keeps CrossChainDonate mounted across the mandatory Ethereum→Base chain switch in Phase 3.
+  // Without this, switching to Base unmounts the component and kills the attestation polling.
+  const [hasPendingCctp, setHasPendingCctp] = useState(false);
+  useEffect(() => {
+    if (!address) { setHasPendingCctp(false); return; }
+    try {
+      setHasPendingCctp(!!localStorage.getItem(`cctp_pending_${address.toLowerCase()}`));
+    } catch {}
+  }, [address]);
+
   // ── Testnet faucet — calls MockUSDC.mint(address, 1000 USDC) so testers can donate. ──
   const publicClient = usePublicClient({ chainId: TARGET_CHAIN_ID });
   const { writeContract: mintToken, data: mintTxHash, isPending: isMinting, reset: resetMint } = useWriteContract();
@@ -269,17 +279,17 @@ export default function DonatePage() {
             </div>
           )}
 
-          {/* ── Cross-chain mode (non-Base chain) ── */}
-          {!stats.maxGoalReached && isConnected && isOnForeignChain && !isOnUnknownChain && (
+          {/* ── Cross-chain mode: user on a foreign chain, OR has a CCTP transfer in-flight ── */}
+          {!stats.maxGoalReached && isConnected && (isOnForeignChain || hasPendingCctp) && !isOnUnknownChain && (
             <CrossChainDonate
-              onSuccess={() => {
-                donate.reset();
-              }}
+              onSuccess={() => { donate.reset(); setHasPendingCctp(false); }}
+              onPendingTransfer={() => setHasPendingCctp(true)}
+              onReset={() => setHasPendingCctp(false)}
             />
           )}
 
-          {/* ── Same-chain mode (Base / Base Sepolia) ── */}
-          {!stats.maxGoalReached && isConnected && !isOnForeignChain && !isOnUnknownChain && (
+          {/* ── Same-chain mode (Base) — only shown when no CCTP transfer is in-flight ── */}
+          {!stats.maxGoalReached && isConnected && !isOnForeignChain && !hasPendingCctp && !isOnUnknownChain && (
             <>
               {/* 3. Main Donation Card */}
               <section className="glass-card rounded-2xl p-2 md:p-8 border border-outline-variant/15 space-y-10 shadow-2xl relative overflow-hidden">
