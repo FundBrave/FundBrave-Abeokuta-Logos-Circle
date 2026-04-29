@@ -3,18 +3,40 @@
 import "./lib/gsap-config"; // Register GSAP plugins once before any page mounts
 
 import { WagmiProvider, http } from "wagmi";
-import { base, baseSepolia, mainnet, arbitrum, optimism } from "wagmi/chains";
+import { base, mainnet, arbitrum, optimism } from "wagmi/chains";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RainbowKitProvider, getDefaultConfig, darkTheme } from "@rainbow-me/rainbowkit";
 import { Toaster } from "sonner";
 import "@rainbow-me/rainbowkit/styles.css";
 
+// Remove expired WalletConnect v2 pairings from localStorage before wagmi initializes.
+// Without this, wagmi's auto-reconnect attempts to restore dead relay subscriptions,
+// causing an endless WebSocket retry loop ("Subscribing to ... failed, please try again").
+if (typeof window !== "undefined") {
+  try {
+    const wcKeys = Object.keys(localStorage).filter((k) => k.startsWith("wc@2:"));
+    if (wcKeys.length > 0) {
+      const pairingKey = wcKeys.find((k) => k.includes("pairing"));
+      if (pairingKey) {
+        const pairings = JSON.parse(localStorage.getItem(pairingKey) ?? "{}") as Record<
+          string,
+          { expiry?: number }
+        >;
+        const now = Math.floor(Date.now() / 1000);
+        const anyExpired = Object.values(pairings).some((p) => p.expiry && p.expiry < now);
+        if (anyExpired) {
+          wcKeys.forEach((k) => localStorage.removeItem(k));
+        }
+      }
+    }
+  } catch {
+    // ignore — never crash the app over storage cleanup
+  }
+}
+
 // Explicit RPC transports — avoids the default public endpoints that get rate-limited.
 const alchemyKey = process.env.NEXT_PUBLIC_ALCHEMY_KEY;
 const rpc = {
-  baseSepolia: alchemyKey
-    ? `https://base-sepolia.g.alchemy.com/v2/${alchemyKey}`
-    : "https://sepolia.base.org",
   base: alchemyKey
     ? `https://base-mainnet.g.alchemy.com/v2/${alchemyKey}`
     : "https://mainnet.base.org",
@@ -27,13 +49,15 @@ const config = getDefaultConfig({
   projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
   appUrl,
   appDescription: "Fund online education courses for women entrepreneurs in Abeokuta, Nigeria.",
-  chains: [base, baseSepolia, mainnet, arbitrum, optimism],
+  // Production chains only — testnets removed to keep session proposals small and avoid
+  // relay 413 errors. baseSepolia is still importable in contracts.ts for address lookups
+  // but shouldn't appear in the wallet switcher.
+  chains: [base, mainnet, arbitrum, optimism],
   transports: {
-    [base.id]:        http(rpc.base),
-    [baseSepolia.id]: http(rpc.baseSepolia),
-    [mainnet.id]:     http(),
-    [arbitrum.id]:    http(),
-    [optimism.id]:    http(),
+    [base.id]:      http(rpc.base),
+    [mainnet.id]:   http(),
+    [arbitrum.id]:  http(),
+    [optimism.id]:  http(),
   },
   ssr: false,
 });
